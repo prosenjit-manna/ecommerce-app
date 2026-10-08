@@ -4,5 +4,7 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests sit next to the source; keep them (and their test/ helpers) out of dist/.
+  "exclude": ["src/**/*.test.ts"]
 }

@@ -12,7 +12,11 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "keys:generate": "tsx scripts/generate-keys.ts"
+    "keys:generate": "tsx scripts/generate-keys.ts",
+    "test": "NODE_OPTIONS='--experimental-vm-modules --no-warnings=ExperimentalWarning' jest --selectProjects unit",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules --no-warnings=ExperimentalWarning' jest --selectProjects unit --watch",
+    "test:coverage": "NODE_OPTIONS='--experimental-vm-modules --no-warnings=ExperimentalWarning' jest --selectProjects unit --coverage",
+    "test:integration": "NODE_OPTIONS='--experimental-vm-modules --no-warnings=ExperimentalWarning' jest --selectProjects integration --passWithNoTests"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",
@@ -39,12 +43,16 @@
     "@graphql-codegen/cli": "^7.4.5",
     "@graphql-codegen/typescript": "^6.1.1",
     "@graphql-codegen/typescript-resolvers": "^6.1.1",
+    "@jest/globals": "30",
+    "@swc/core": "^1.16.13",
+    "@swc/jest": "^0.2.39",
     "@types/express": "^5.0.6",
     "@types/node": "^24.19.1",
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "@types/ua-parser-js": "^0.7.39",
     "drizzle-kit": "^0.31.11",
+    "jest": "30",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },

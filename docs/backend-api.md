@@ -107,9 +107,9 @@ auth ✅ → catalog → event backbone + notifications → inventory → cart �
 | Area | Choice |
 |---|---|
 | Test runner | **Jest 30** in every service, and on mobile, so there's one runner across the repo |
-| TypeScript + ESM | **ts-jest** with the `default-esm` preset. Services are ESM (`"type": "module"`), so Jest runs with `NODE_OPTIONS=--experimental-vm-modules` |
-| Unit | Jest. Every service ships unit tests **from the week it's built** (target: at least 70% coverage on services) |
-| Mocking | `jest.unstable_mockModule()` + dynamic `await import()` (ESM modules can't use hoisted `jest.mock`). Unit tests never touch Postgres, Redis, SQS or SMTP: repositories, the Redis client and the mailer are mocked |
+| TypeScript + ESM | **@swc/jest** compiles tests (it only strips types; `yarn typecheck` type-checks `src/` and `test/`). ts-jest can't be used: it needs TypeScript < 7, and TypeScript 7 has no JS API. Services are ESM (`"type": "module"`), so Jest runs with `NODE_OPTIONS='--experimental-vm-modules --no-warnings=ExperimentalWarning'` |
+| Unit | Jest. Every service ships unit tests **from the week it's built** (target: at least 70% coverage on services). Tests are **colocated**: `foo.ts` → `foo.test.ts` in the same folder |
+| Mocking | `jest.unstable_mockModule()` + dynamic `await import()` (ESM modules can't use hoisted `jest.mock`). Register mocks by **absolute path** (`src('lib/mailer.ts')` helper in `test/helpers/fixtures.ts`). Unit tests never touch Postgres, Redis, SQS or SMTP: repositories, the Redis client and the mailer are mocked. Anything that opens a connection on import (e.g. `redis.ts`) **must** be mocked, or Jest never exits |
 | Integration | Jest + **Testcontainers** (real Postgres, Redis and LocalStack), run as a separate Jest project |
 | Coverage | Jest's built-in coverage (`--coverage`) with per-service `coverageThreshold`, enforced in CI |
 | Schema safety | `rover subgraph check` / `graphql-inspector`: breaking schema changes fail CI |
@@ -147,12 +147,14 @@ services/<name>/
     graphql/context.ts        # JWT → ctx.auth, per-request DataLoaders
     graphql/generated.ts      # GraphQL Code Generator output
     modules/<area>/       # <area>.service.ts (business logic) + <area>.repository.ts (Drizzle queries)
+      <area>.service.test.ts          # unit test, next to the file it tests
+      <area>.repository.integration.test.ts  # Jest + Testcontainers (real Postgres / Redis / LocalStack)
     lib/                  # service-local helpers (moves to packages/service-kit once a second service needs it)
-  test/
-    unit/                 # Jest unit tests, mirroring src/ (e.g. test/unit/modules/otp/otp.service.test.ts)
-    integration/          # Jest + Testcontainers (real Postgres / Redis / LocalStack)
+  test/                   # shared test infrastructure only, no tests
+    helpers/fixtures.ts   # row builders (user, session, challenge, ...) + src() path helper for mocks
     setup.ts              # test env vars (generated JWT keys, OTP pepper, ...)
-  jest.config.ts          # two projects: unit, integration
+  jest.config.ts          # two projects: unit (*.test.ts), integration (*.integration.test.ts)
+  tsconfig.build.json     # excludes *.test.ts, so tests never reach dist/
   insomnia/collection.yaml
 ```
 

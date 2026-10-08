@@ -47,6 +47,7 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 
 ### 2026-10-08 · Auth subgraph
 **Added**
+- Jest unit tests for `services/auth` (`yarn test`, `yarn test:coverage`), **colocated with the code** (`src/lib/crypto.ts` → `src/lib/crypto.test.ts`; integration tests will be `*.integration.test.ts`): 198 tests in 16 suites covering every helper, service and resolver, with ~98% line and ~91% branch coverage and a 70% threshold. Planting three security bugs (decoy OTP verifying, refresh-token reuse not detected, password reset keeping sessions) made the suite fail each time.
 - `services/auth/insomnia/collection.yaml`: Insomnia v5 collection that doubles as the auth API docs. It has a Markdown description per request (inputs, every result type, rate limits, side effects), after-response scripts that save `challengeId` and tokens and run tests, a pre-request script that reads OTP codes from Mailpit, error-case requests, Federation and REST folders, and `local`/`gateway`/`staging` environments.
 - `services/auth`: standalone Apollo Federation v2 subgraph (Express 5, Apollo Server 5, Drizzle, port 4001) that owns the `User` entity.
 - Signup with email verification, password + email OTP 2-step login (on by default per user, can be toggled with `setTwoFactor`), forgot/reset password via an emailed code.
@@ -57,6 +58,7 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 - `packages/config-ts` and a Postgres init script that creates one database per service.
 
 **Learned**
+- ts-jest doesn't support TypeScript 7 (no JS API), so Jest uses @swc/jest. ESM mocks need `jest.unstable_mockModule` before `await import()`, and a module that connects on import (Redis) left unmocked makes Jest hang.
 - drizzle-kit's migrations table can't live in the schema that the first migration creates, so it stays in the default `drizzle` schema.
 - GraphQL rejects fragments on types outside a union, which is why every failure type implements a shared `UserError` interface.
 
