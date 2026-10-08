@@ -1,6 +1,6 @@
 /**
  * Generates an Ed25519 key pair for signing access tokens and prints .env lines.
- * Usage: pnpm keys:generate >> .env   (or copy the lines by hand)
+ * Usage: yarn keys:generate >> .env   (or copy the lines by hand)
  */
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 

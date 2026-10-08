@@ -53,8 +53,10 @@ auth ✅ → catalog → event backbone + notifications → inventory → cart �
 | Area | Choice |
 |---|---|
 | Runtime | Node.js 24 |
-| Language | TypeScript (strict), shared config in `packages/config-ts` |
-| Package manager / monorepo | pnpm workspaces + Turborepo |
+| Language | TypeScript (strict), shared base config published as `@<your-scope>/config-ts` (services inline it until it's published) |
+| Package manager | **Yarn 4** (via Corepack) with `nodeLinker: node-modules`. Install scripts stay disabled (Yarn 4's default); argon2 uses its prebuilt binaries |
+| Repo structure | One git repo, **no monorepo tooling**: every service, app and package is a standalone Yarn project with its own `package.json` and `yarn.lock` |
+| Shared code | Packages in `packages/` are **published to public npm** under your scope and installed by version (semver). Renovate/Dependabot bumps them in each service |
 | Lint / format | ESLint (`packages/config-eslint`) + Prettier |
 | Commits | Husky + commitlint (conventional commits) |
 | Local dependencies | `compose.yaml` at the repo root (Podman or Docker): Postgres (one database per service, created by `infra/local/postgres-init/`), Redis, Mailpit, LocalStack (SNS/SQS/S3) |
@@ -104,18 +106,22 @@ auth ✅ → catalog → event backbone + notifications → inventory → cart �
 ### Testing
 | Area | Choice |
 |---|---|
-| Unit | Vitest (target: at least 70% coverage on services) |
-| Integration | Vitest + **Testcontainers** (real Postgres and Redis) |
+| Test runner | **Jest 30** in every service, and on mobile, so there's one runner across the repo |
+| TypeScript + ESM | **ts-jest** with the `default-esm` preset. Services are ESM (`"type": "module"`), so Jest runs with `NODE_OPTIONS=--experimental-vm-modules` |
+| Unit | Jest. Every service ships unit tests **from the week it's built** (target: at least 70% coverage on services) |
+| Mocking | `jest.unstable_mockModule()` + dynamic `await import()` (ESM modules can't use hoisted `jest.mock`). Unit tests never touch Postgres, Redis, SQS or SMTP: repositories, the Redis client and the mailer are mocked |
+| Integration | Jest + **Testcontainers** (real Postgres, Redis and LocalStack), run as a separate Jest project |
+| Coverage | Jest's built-in coverage (`--coverage`) with per-service `coverageThreshold`, enforced in CI |
 | Schema safety | `rover subgraph check` / `graphql-inspector`: breaking schema changes fail CI |
 | Event contracts | Pact or JSON-schema checks for SNS/SQS messages |
 | Manual / smoke API testing | **Insomnia** collections + **Inso CLI** (see section 4) |
 | Load | k6 (Phase 6) |
 
-### Observability and deployment (later phases)
+### Observability and deployment
 | Area | Choice |
 |---|---|
 | Tracing | OpenTelemetry: router → subgraphs → SQS consumers, sent to X-Ray or Grafana Tempo |
-| Metrics / alerts | Prometheus + Grafana |
+| Metrics / alerts | **Prometheus + Grafana**: a `prom-client` metrics plugin in `service-kit` exposes `/metrics` on every service, and Apollo Router exports its own metrics. Dashboards show API usage plus success and failure rates per service and per operation, using the outcome classification (`success` / `user_error` / `client_error` / `server_error`) in [ROADMAP.md](../ROADMAP.md#api-metrics-usage-success-rate-and-failure-rate-in-grafana). Local: compose; AWS: Grafana Cloud free tier; K8s: kube-prometheus-stack |
 | Containers | Multi-stage Dockerfile, non-root user, graceful shutdown |
 | CI | GitHub Actions: lint → typecheck → test → schema check → build → Trivy → push to ECR (OIDC) |
 | Hosting | ECS Fargate, one ECS service per microservice with Cloud Map discovery (Phase 3), then EKS + Argo CD + Argo Rollouts (Phase 4) |
@@ -129,7 +135,7 @@ auth ✅ → catalog → event backbone + notifications → inventory → cart �
 Every service follows the layout of `services/auth`:
 ```
 services/<name>/
-  package.json, tsconfig.json, drizzle.config.ts, codegen.ts, .env.example
+  package.json, yarn.lock, .yarnrc.yml, tsconfig.json, drizzle.config.ts, codegen.ts, .env.example
   src/
     index.ts              # boot + graceful shutdown
     app.ts                # Express: request context, logging, rate limit, /health, /ready, /graphql
@@ -142,8 +148,15 @@ services/<name>/
     graphql/generated.ts      # GraphQL Code Generator output
     modules/<area>/       # <area>.service.ts (business logic) + <area>.repository.ts (Drizzle queries)
     lib/                  # service-local helpers (moves to packages/service-kit once a second service needs it)
+  test/
+    unit/                 # Jest unit tests, mirroring src/ (e.g. test/unit/modules/otp/otp.service.test.ts)
+    integration/          # Jest + Testcontainers (real Postgres / Redis / LocalStack)
+    setup.ts              # test env vars (generated JWT keys, OTP pepper, ...)
+  jest.config.ts          # two projects: unit, integration
   insomnia/collection.yaml
 ```
+
+**What each service unit-tests:** pure helpers (crypto, validation, mapping), every service-layer branch (success plus each union failure: invalid input, rate limited, not found, ...), and resolvers' validation and auth checks. Repository SQL is covered by the integration tests, not by unit tests.
 
 ### Rules
 - **Entities:** `type Product @key(fields: "id")` is owned by catalog. Other services extend it (for example, inventory adds `stock`) and resolve it with `__resolveReference`.
@@ -201,7 +214,7 @@ services/notifications/insomnia/collection.yaml
 
 ### Environments
 - **Base environment:** `baseUrl`, `graphqlPath`, `accessToken`.
-- **Sub-environments:** `local` (pnpm dev), `docker` (compose), `staging`, and later `prod`.
+- **Sub-environments:** `local` (`yarn dev`), `docker` (compose), `staging`, and later `prod`.
 - **Secrets:** use **private** sub-environments, which are left out of exports and Git Sync. Never commit tokens or Stripe keys.
 - **Token chaining:** the Login request runs `insomnia.environment.set('accessToken', …)`, and every other request sends `Bearer {{ accessToken }}`.
 
@@ -213,7 +226,7 @@ services/notifications/insomnia/collection.yaml
 
 ### Automation
 - Add after-response test scripts with `insomnia.test(...)` and `insomnia.expect(...)`.
-- Run them in CI with the **Inso CLI** (`inso run collection …`) against `docker compose` as a smoke test after the Vitest suites.
+- Run them in CI with the **Inso CLI** (`inso run collection …`) against `docker compose` as a smoke test after the Jest suites.
 
 ### When to add what
 | Phase | Insomnia work |
@@ -226,7 +239,7 @@ services/notifications/insomnia/collection.yaml
 ### Notes
 - Use a **local or Git Sync project** so the collections stay in the repo, not in Insomnia's cloud.
 - Commit exported **YAML**, which diffs more cleanly than JSON.
-- Insomnia is for exploration, manual checks and smoke tests. It does **not** replace Vitest or Testcontainers.
+- Insomnia is for exploration, manual checks and smoke tests. It does **not** replace Jest or Testcontainers.
 
 ---
 

@@ -1,0 +1,1362 @@
+# Insomnia collection for the auth subgraph (Insomnia v5 format).
+# Import: Insomnia → Create → Import → this file (or use Git Sync on this repo).
+# Edit in Insomnia and re-export as YAML (Export → Insomnia v5) to keep this file in sync.
+type: collection.insomnia.rest/5.0
+name: Auth service
+meta:
+  id: wrk_f360a42d687718e2d958ab6ecb13ddfb
+  created: 1791460800000
+  modified: 1791460800000
+  description: |-
+    # Auth service API
+
+    GraphQL subgraph for accounts, sign-in, tokens and device sessions. Directly on `http://localhost:4001/graphql`; through Apollo Router later (`gateway` environment).
+
+    **Start here:** pick the **local** environment, then run *1. Sign up* → *signUp*, then *verifyEmail*. OTP codes are read from Mailpit automatically (`autoFetchOtp`), and the after-response scripts save `challengeId`, `accessToken`, `refreshToken` and `sessionId` for the next request.
+
+    **Results:** expected failures are union members (check `__typename`) and all implement `UserError { message }`. Top-level `errors` mean auth failures (`UNAUTHENTICATED` with `extensions.reason`) or server errors.
+
+    **Tokens:** access token = Ed25519 JWT, 15 min, sent as `Authorization: Bearer`. Refresh token = opaque, single-use, rotated on every refresh. Reusing one revokes the session.
+collection:
+  - name: 1. Sign up
+    meta:
+      id: fld_5cbfa0cf59005c818190c061adc486e2
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -99700
+      description: |-
+        Create an account, then confirm the email with the 6-digit code. Verifying the email also signs the user in.
+
+        **Flow:** `signUp` → (code emailed) → `verifyEmail` → tokens saved to the environment.
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: signUp
+        meta:
+          id: req_844c62b1fbf4d74286afab7e8af47a02
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # signUp
+            Creates an account (email unverified) and emails a 6-digit **email verification** code.
+
+            **Auth:** none · **Rate limit:** 5 per hour per IP
+
+            | Input | Rules |
+            |---|---|
+            | `email` | valid email, stored lowercased |
+            | `name` | 1–100 chars |
+            | `password` | 8–128 chars, 3 of: lowercase, uppercase, digit, symbol; must not contain the email or name |
+            | `device` | optional `DeviceInfoInput` (platform `ios`/`android`/`web`, deviceName, appVersion, deviceId) |
+
+            | Result | When |
+            |---|---|
+            | `OtpChallenge` | Account created, code sent. Script saves `challengeId`. |
+            | `EmailAlreadyRegistered` | Email is taken |
+            | `WeakPassword` | `reasons` lists what to fix |
+            | `ValidationError` | Bad input (`field` names it) |
+            | `RateLimited` | Too many signups from this IP |
+
+            GraphQL always answers HTTP 200. Expected failures come back as a **union member** (check `__typename`); every failure type implements `UserError { message }`. Top-level `errors` are only used for auth failures (`UNAUTHENTICATED`, `NOT_FOUND`) and unexpected server errors.
+          sortKey: -99900
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation SignUp($input: SignUpInput!) {\n  signUp(input: $input) {\n    __typename\n    ... on OtpChallenge { challengeId purpose maskedEmail expiresAt resendAvailableAt }\n    ... on WeakPassword { reasons }\n    ... on ValidationError { field }\n    ... on RateLimited { retryAfterSeconds }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"email":"{{ _.email }}","name":"{{ _.name }}","password":"{{ _.password }}","device":{"platform":"{{ _.devicePlatform }}","deviceName":"{{ _.deviceName }}","appVersion":"{{ _.appVersion }}","deviceId":"{{ _.deviceId }}"}}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('signUp returns OtpChallenge', () => {
+              insomnia.expect(["OtpChallenge"]).to.include(body.data?.signUp?.__typename);
+            });
+
+            const challenge = body.data?.signUp?.challenge ?? body.data?.signUp;
+            if (challenge?.challengeId) {
+              insomnia.environment.set('challengeId', challenge.challengeId);
+              console.log('Saved challengeId', challenge.challengeId);
+            }
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: verifyEmail
+        meta:
+          id: req_2396f946da29b709c3092d38bd8f0758
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # verifyEmail
+            Confirms the email with the code from `signUp` (or from a login on an unverified account) and **signs the user in**: creates a session and returns tokens.
+
+            **Auth:** none · **Rate limit:** 20 per 15 min per IP, and 5 wrong codes per challenge
+
+            Locally the pre-request script reads the code from Mailpit (`autoFetchOtp`), so you can just press Send.
+
+            | Result | When |
+            |---|---|
+            | `AuthSuccess` | user + session + tokens. Script saves `accessToken`, `refreshToken`, `sessionId`. |
+            | `InvalidOtp` | Wrong code; `attemptsRemaining` counts down from 5 |
+            | `OtpExpired` | Expired (10 min), already used, or unknown challenge |
+            | `AccountDisabled` | Account is disabled |
+          sortKey: -99800
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation VerifyEmail($input: VerifyEmailInput!) {\n  verifyEmail(input: $input) {\n    __typename\n    ... on AuthSuccess {\n    user { id email name role emailVerified twoFactorEnabled createdAt }\n    session { id isCurrent loginMethod device { type name os browser platform appVersion } ipAddress lastIpAddress location { city region country countryCode } createdAt lastSeenAt expiresAt }\n    tokens { accessToken accessTokenExpiresAt refreshToken refreshTokenExpiresAt }\n  }\n    ... on InvalidOtp { attemptsRemaining }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"challengeId":"{{ _.challengeId }}","code":"{{ _.otpCode }}","device":{"platform":"{{ _.devicePlatform }}","deviceName":"{{ _.deviceName }}","appVersion":"{{ _.appVersion }}","deviceId":"{{ _.deviceId }}"}}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          preRequest: |-
+            // Local only: read the newest code for this email from Mailpit (subject ends with the 6-digit code).
+            // Turn off with autoFetchOtp=false, or paste the code into otpCode yourself.
+            if (insomnia.environment.get('autoFetchOtp') === true || insomnia.environment.get('autoFetchOtp') === 'true') {
+              const mailpit = insomnia.environment.get('mailpitUrl');
+              const email = insomnia.environment.get('email');
+              const url = mailpit + '/api/v1/search?limit=1&query=' + encodeURIComponent('to:' + email);
+              const resp = await new Promise((resolve, reject) => {
+                insomnia.sendRequest(url, (err, res) => (err ? reject(err) : resolve(res)));
+              });
+              const data = typeof resp.json === 'function' ? resp.json() : JSON.parse(resp.body ?? resp.text());
+              const code = data.messages?.[0]?.Subject?.match(/(\d{6})$/)?.[1];
+              if (code) {
+                insomnia.environment.set('otpCode', code);
+                console.log('Fetched OTP from Mailpit:', code);
+              } else {
+                console.warn('No OTP email found in Mailpit for', email);
+              }
+            }
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('verifyEmail returns AuthSuccess', () => {
+              insomnia.expect(["AuthSuccess"]).to.include(body.data?.verifyEmail?.__typename);
+            });
+
+            const tokens = body.data?.verifyEmail.tokens;
+            if (tokens?.accessToken) {
+              insomnia.environment.set('accessToken', tokens.accessToken);
+              insomnia.environment.set('refreshToken', tokens.refreshToken);
+              console.log('Saved accessToken + refreshToken');
+            }
+
+            const session = body.data?.verifyEmail?.session;
+            if (session?.id) insomnia.environment.set('sessionId', session.id);
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: 2. Login
+    meta:
+      id: fld_c45ebb286afbe348a7dfa950611d2bf9
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -99300
+      description: |-
+        Sign-in is two steps when two-factor is on (the default): password first, then the emailed code.
+
+        **Flow:** `login` → `OtpChallenge` → (code emailed) → `verifyLoginOtp` → tokens. With two-factor off, `login` returns `AuthSuccess` directly.
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: login
+        meta:
+          id: req_428821350e9691491f616b754cd8315f
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # login
+            Step 1 of sign-in: checks the password.
+
+            **Auth:** none · **Rate limits:** 10 per 15 min per IP+email, 100 per day per IP. After **10 wrong passwords in a row** the email is locked for 15 min (reset on a correct password).
+
+            | Result | When |
+            |---|---|
+            | `OtpChallenge` | Password OK and two-factor on (default): a **login** code was emailed. Script saves `challengeId`; continue with `verifyLoginOtp`. |
+            | `AuthSuccess` | Password OK and two-factor off: signed in. Script saves the tokens. |
+            | `EmailNotVerified` | Password OK but the email isn't verified: a new verification code was sent. Continue with `verifyEmail` using `challenge.challengeId` (the script saves it). |
+            | `InvalidCredentials` | Unknown email or wrong password (same answer for both, on purpose) |
+            | `AccountDisabled` | Account is disabled |
+            | `RateLimited` | See limits above |
+
+            The device (`DeviceInfoInput` plus the `User-Agent` header) and IP are recorded on the session created in step 2.
+          sortKey: -99600
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation Login($input: LoginInput!) {\n  login(input: $input) {\n    __typename\n    ... on OtpChallenge { challengeId purpose maskedEmail expiresAt resendAvailableAt }\n    ... on AuthSuccess {\n    user { id email name role emailVerified twoFactorEnabled createdAt }\n    session { id isCurrent loginMethod device { type name os browser platform appVersion } ipAddress lastIpAddress location { city region country countryCode } createdAt lastSeenAt expiresAt }\n    tokens { accessToken accessTokenExpiresAt refreshToken refreshTokenExpiresAt }\n  }\n    ... on EmailNotVerified { challenge { challengeId purpose maskedEmail expiresAt } }\n    ... on RateLimited { retryAfterSeconds }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"email":"{{ _.email }}","password":"{{ _.password }}","device":{"platform":"{{ _.devicePlatform }}","deviceName":"{{ _.deviceName }}","appVersion":"{{ _.appVersion }}","deviceId":"{{ _.deviceId }}"}}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('login returns OtpChallenge or AuthSuccess', () => {
+              insomnia.expect(["OtpChallenge","AuthSuccess"]).to.include(body.data?.login?.__typename);
+            });
+
+            const challenge = body.data?.login?.challenge ?? body.data?.login;
+            if (challenge?.challengeId) {
+              insomnia.environment.set('challengeId', challenge.challengeId);
+              console.log('Saved challengeId', challenge.challengeId);
+            }
+
+            const tokens = body.data?.login.tokens;
+            if (tokens?.accessToken) {
+              insomnia.environment.set('accessToken', tokens.accessToken);
+              insomnia.environment.set('refreshToken', tokens.refreshToken);
+              console.log('Saved accessToken + refreshToken');
+            }
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: verifyLoginOtp
+        meta:
+          id: req_16f9c11d192099bf7eb34906cd4d7fe0
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # verifyLoginOtp
+            Step 2 of sign-in: the emailed code. Creates the device session and returns tokens. Sends a "new sign-in" email if this device hasn't been seen before.
+
+            **Auth:** none · **Rate limit:** 20 per 15 min per IP, and 5 wrong codes per challenge
+
+            | Result | When |
+            |---|---|
+            | `AuthSuccess` | Script saves `accessToken`, `refreshToken`, `sessionId` |
+            | `InvalidOtp` | Wrong code; `attemptsRemaining` |
+            | `OtpExpired` | Expired, used, or unknown challenge |
+            | `AccountDisabled` | Account was disabled in between |
+          sortKey: -99500
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation VerifyLoginOtp($input: VerifyLoginOtpInput!) {\n  verifyLoginOtp(input: $input) {\n    __typename\n    ... on AuthSuccess {\n    user { id email name role emailVerified twoFactorEnabled createdAt }\n    session { id isCurrent loginMethod device { type name os browser platform appVersion } ipAddress lastIpAddress location { city region country countryCode } createdAt lastSeenAt expiresAt }\n    tokens { accessToken accessTokenExpiresAt refreshToken refreshTokenExpiresAt }\n  }\n    ... on InvalidOtp { attemptsRemaining }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"challengeId":"{{ _.challengeId }}","code":"{{ _.otpCode }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          preRequest: |-
+            // Local only: read the newest code for this email from Mailpit (subject ends with the 6-digit code).
+            // Turn off with autoFetchOtp=false, or paste the code into otpCode yourself.
+            if (insomnia.environment.get('autoFetchOtp') === true || insomnia.environment.get('autoFetchOtp') === 'true') {
+              const mailpit = insomnia.environment.get('mailpitUrl');
+              const email = insomnia.environment.get('email');
+              const url = mailpit + '/api/v1/search?limit=1&query=' + encodeURIComponent('to:' + email);
+              const resp = await new Promise((resolve, reject) => {
+                insomnia.sendRequest(url, (err, res) => (err ? reject(err) : resolve(res)));
+              });
+              const data = typeof resp.json === 'function' ? resp.json() : JSON.parse(resp.body ?? resp.text());
+              const code = data.messages?.[0]?.Subject?.match(/(\d{6})$/)?.[1];
+              if (code) {
+                insomnia.environment.set('otpCode', code);
+                console.log('Fetched OTP from Mailpit:', code);
+              } else {
+                console.warn('No OTP email found in Mailpit for', email);
+              }
+            }
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('verifyLoginOtp returns AuthSuccess', () => {
+              insomnia.expect(["AuthSuccess"]).to.include(body.data?.verifyLoginOtp?.__typename);
+            });
+
+            const tokens = body.data?.verifyLoginOtp.tokens;
+            if (tokens?.accessToken) {
+              insomnia.environment.set('accessToken', tokens.accessToken);
+              insomnia.environment.set('refreshToken', tokens.refreshToken);
+              console.log('Saved accessToken + refreshToken');
+            }
+
+            const session = body.data?.verifyLoginOtp?.session;
+            if (session?.id) insomnia.environment.set('sessionId', session.id);
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: resendOtp
+        meta:
+          id: req_91802768cb6a13bf4dfc21bdc33c47b5
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # resendOtp
+            Emails a **new** code for an open challenge (any purpose). The old code stops working, the attempt counter resets and the expiry restarts.
+
+            **Auth:** none · **Limits:** 60 s cooldown between sends (see `resendAvailableAt`), 5 sends per challenge, 10 sends per hour per email
+
+            | Result | When |
+            |---|---|
+            | `OtpChallenge` | New code sent |
+            | `RateLimited` | Cooldown or caps hit; `retryAfterSeconds` |
+            | `OtpExpired` | Challenge unknown or already used |
+          sortKey: -99400
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation ResendOtp($input: ResendOtpInput!) {\n  resendOtp(input: $input) {\n    __typename\n    ... on OtpChallenge { challengeId purpose maskedEmail expiresAt resendAvailableAt }\n    ... on RateLimited { retryAfterSeconds }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"challengeId":"{{ _.challengeId }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('resendOtp returns OtpChallenge or RateLimited', () => {
+              insomnia.expect(["OtpChallenge","RateLimited"]).to.include(body.data?.resendOtp?.__typename);
+            });
+
+            if (body.data?.resendOtp?.__typename === 'RateLimited') console.log('Cooldown: wait', body.data.resendOtp.retryAfterSeconds, 's');
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: 3. Tokens
+    meta:
+      id: fld_c949c00338f0aae8ade45e286ae98820
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -99100
+      description: Access tokens last 15 minutes. Exchange the refresh token for a new pair before (or when) the access token expires.
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: refreshTokens
+        meta:
+          id: req_1031af8cc2a714c51d6bd8cce08da97b
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # refreshTokens
+            Returns a new access token **and a new refresh token**. Refresh tokens are **single-use**: the old one stops working immediately.
+
+            **Auth:** none (the refresh token is the credential) · **Rate limit:** 60 per minute per IP
+
+            **Reuse detection:** sending an already-used refresh token is treated as theft. The whole session is revoked, so both copies stop working and the user must sign in again. Try it: send this request, then send the same body again by turning off the after-response script, or use *Error cases → Refresh token reuse*.
+
+            | Result | When |
+            |---|---|
+            | `AuthTokens` | Script saves the new pair |
+            | `InvalidRefreshToken` | Unknown, expired (30 days sliding, 90 days max per session), reused, or the session was revoked |
+            | `RateLimited` | Too many refreshes from this IP |
+          sortKey: -99200
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation RefreshTokens($input: RefreshTokensInput!) {\n  refreshTokens(input: $input) {\n    __typename\n    ... on AuthTokens { accessToken accessTokenExpiresAt refreshToken refreshTokenExpiresAt }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"refreshToken":"{{ _.refreshToken }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('refreshTokens returns AuthTokens', () => {
+              insomnia.expect(["AuthTokens"]).to.include(body.data?.refreshTokens?.__typename);
+            });
+
+            const tokens = body.data?.refreshTokens;
+            if (tokens?.accessToken) {
+              insomnia.environment.set('accessToken', tokens.accessToken);
+              insomnia.environment.set('refreshToken', tokens.refreshToken);
+              console.log('Saved accessToken + refreshToken');
+            }
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: 4. Password reset
+    meta:
+      id: fld_8782dc45ec4b6ea5c49d59f418534d35
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -98800
+      description: Forgot password → code by email → set a new password. A reset **signs out every device**.
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: forgotPassword
+        meta:
+          id: req_e1c622e2c2707c926c355a6c774a56d0
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # forgotPassword
+            Emails a **password reset** code.
+
+            **Auth:** none · **Rate limits:** 3 per hour per email, 10 per hour per IP
+
+            Always returns `OtpChallenge`, **even for emails with no account**. No email is sent then, and the challenge can never be verified. This keeps the endpoint from revealing who is registered.
+          sortKey: -99000
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation ForgotPassword($input: ForgotPasswordInput!) {\n  forgotPassword(input: $input) {\n    __typename\n    ... on OtpChallenge { challengeId purpose maskedEmail expiresAt resendAvailableAt }\n    ... on RateLimited { retryAfterSeconds }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"email":"{{ _.email }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('forgotPassword returns OtpChallenge', () => {
+              insomnia.expect(["OtpChallenge"]).to.include(body.data?.forgotPassword?.__typename);
+            });
+
+            const challenge = body.data?.forgotPassword?.challenge ?? body.data?.forgotPassword;
+            if (challenge?.challengeId) {
+              insomnia.environment.set('challengeId', challenge.challengeId);
+              console.log('Saved challengeId', challenge.challengeId);
+            }
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: resetPassword
+        meta:
+          id: req_cdd727b0ce096914f5f6dbbe18748648
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # resetPassword
+            Sets a new password using the code from `forgotPassword`.
+
+            **Auth:** none · **Rate limit:** 20 per 15 min per IP, and 5 wrong codes per challenge
+
+            Side effects: **all sessions are revoked** (every device signed out, live access tokens rejected immediately), the email counts as verified, the login lockout is cleared, and a "password changed" email is sent.
+
+            The password is checked **before** the code, so a weak password doesn't use up the code.
+
+            | Result | When |
+            |---|---|
+            | `PasswordResetSuccess` | Done. Script clears the saved tokens. |
+            | `WeakPassword` | Fix `newPassword` and retry with the same code |
+            | `InvalidOtp` / `OtpExpired` | Wrong, expired or used code |
+
+            After a reset, put the new password into `password` before running **login** again.
+          sortKey: -98900
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation ResetPassword($input: ResetPasswordInput!) {\n  resetPassword(input: $input) {\n    __typename\n    ... on PasswordResetSuccess { message }\n    ... on InvalidOtp { attemptsRemaining }\n    ... on WeakPassword { reasons }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"challengeId":"{{ _.challengeId }}","code":"{{ _.otpCode }}","newPassword":"{{ _.newPassword }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          preRequest: |-
+            // Local only: read the newest code for this email from Mailpit (subject ends with the 6-digit code).
+            // Turn off with autoFetchOtp=false, or paste the code into otpCode yourself.
+            if (insomnia.environment.get('autoFetchOtp') === true || insomnia.environment.get('autoFetchOtp') === 'true') {
+              const mailpit = insomnia.environment.get('mailpitUrl');
+              const email = insomnia.environment.get('email');
+              const url = mailpit + '/api/v1/search?limit=1&query=' + encodeURIComponent('to:' + email);
+              const resp = await new Promise((resolve, reject) => {
+                insomnia.sendRequest(url, (err, res) => (err ? reject(err) : resolve(res)));
+              });
+              const data = typeof resp.json === 'function' ? resp.json() : JSON.parse(resp.body ?? resp.text());
+              const code = data.messages?.[0]?.Subject?.match(/(\d{6})$/)?.[1];
+              if (code) {
+                insomnia.environment.set('otpCode', code);
+                console.log('Fetched OTP from Mailpit:', code);
+              } else {
+                console.warn('No OTP email found in Mailpit for', email);
+              }
+            }
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('resetPassword returns PasswordResetSuccess', () => {
+              insomnia.expect(["PasswordResetSuccess"]).to.include(body.data?.resetPassword?.__typename);
+            });
+
+            if (body.data?.resetPassword?.__typename === 'PasswordResetSuccess') {
+              // Every session was revoked, so the saved tokens are dead now.
+              insomnia.environment.set('accessToken', '');
+              insomnia.environment.set('refreshToken', '');
+              console.log('Password changed. Swap password/newPassword in the environment before logging in again.');
+            }
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: 5. Account & sessions
+    meta:
+      id: fld_7412203a480066d8683be1f194f95e2e
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -98000
+      description: |-
+        Requests for the signed-in user. They send `Authorization: Bearer {{ accessToken }}`; run a sign-in flow first.
+
+        Without a valid token they return a top-level `UNAUTHENTICATED` error whose `extensions.reason` is `EXPIRED` (refresh and retry), `REVOKED` (session signed out) or `INVALID`.
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: me
+        meta:
+          id: req_2744ccd10c7533bd736ad890f9dd5cab
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # me
+            The signed-in user.
+
+            **Auth:** Bearer access token
+          sortKey: -98700
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query Me {\n  me { id email name role emailVerified twoFactorEnabled createdAt }\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        authentication:
+          type: bearer
+          token: "{{ _.accessToken }}"
+          prefix: Bearer
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: mySessions
+        meta:
+          id: req_f216126194a3fb5f744198977056522b
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # mySessions
+            Every device the user is signed in on, most recently used first, for a "your devices" screen.
+
+            **Auth:** Bearer access token
+
+            Each session has: `isCurrent` (the device making this request), `loginMethod`, `device` (from `DeviceInfoInput` + User-Agent), `ipAddress` (where it signed in), `lastIpAddress` (latest token refresh), `location` (from the IP via GeoLite2; null for local/private IPs or without a GeoIP database), `lastSeenAt`, `expiresAt`.
+          sortKey: -98600
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query MySessions {\n  mySessions { id isCurrent loginMethod device { type name os browser platform appVersion } ipAddress lastIpAddress location { city region country countryCode } createdAt lastSeenAt expiresAt }\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        authentication:
+          type: bearer
+          token: "{{ _.accessToken }}"
+          prefix: Bearer
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: myAuthEvents
+        meta:
+          id: req_c6ed83789958326a717f4cd9bd8fe584
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # myAuthEvents
+            Security history, newest first: signups, sign-ins, failed attempts, codes sent, refreshes, revocations, password resets, rate-limit hits.
+
+            **Auth:** Bearer access token · **Pagination:** Relay cursor. `first` is 1–100 (default 20); pass `pageInfo.endCursor` as `after` for the next page.
+          sortKey: -98500
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query MyAuthEvents($first: Int, $after: String) {\n  myAuthEvents(first: $first, after: $after) {\n    edges {\n      cursor\n      node { id type ipAddress userAgent location { city country } createdAt }\n    }\n    pageInfo { hasNextPage endCursor }\n  }\n}\n","variables":{"first":20,"after":null}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        authentication:
+          type: bearer
+          token: "{{ _.accessToken }}"
+          prefix: Bearer
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: revokeSession
+        meta:
+          id: req_47fa644ddfae38335f70792d6b5fd4c3
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # revokeSession
+            Signs out **one** of the user's devices. Its refresh token stops working and its access token is rejected immediately.
+
+            **Auth:** Bearer access token
+
+            Set `revokeSessionId` in the environment to an `id` from **mySessions**. A session that doesn't exist or belongs to someone else returns a top-level `NOT_FOUND` error (same answer for both).
+          sortKey: -98400
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation RevokeSession($input: RevokeSessionInput!) {\n  revokeSession(input: $input) { revokedSessionIds }\n}\n","variables":{"input":{"sessionId":"{{ _.revokeSessionId }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        authentication:
+          type: bearer
+          token: "{{ _.accessToken }}"
+          prefix: Bearer
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: revokeOtherSessions
+        meta:
+          id: req_4921fc63bd272731a29e425feb7468e2
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # revokeOtherSessions
+            Signs out **every device except this one** ("sign out everywhere else").
+
+            **Auth:** Bearer access token
+          sortKey: -98300
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation RevokeOtherSessions {\n  revokeOtherSessions { revokedSessionIds }\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        authentication:
+          type: bearer
+          token: "{{ _.accessToken }}"
+          prefix: Bearer
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: setTwoFactor
+        meta:
+          id: req_d6ce06029291f84c01e4d34467a95171
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # setTwoFactor
+            Turns the email-code step of sign-in on or off. Two-factor is **on by default**. The current password is required.
+
+            **Auth:** Bearer access token
+
+            | Result | When |
+            |---|---|
+            | `User` | Updated user (`twoFactorEnabled`) |
+            | `InvalidCredentials` | Wrong password |
+          sortKey: -98200
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation SetTwoFactor($input: SetTwoFactorInput!) {\n  setTwoFactor(input: $input) {\n    __typename\n    ... on User { id email name role emailVerified twoFactorEnabled createdAt }\n    ... on UserError { __typename message }\n  }\n}\n","variables":{"input":{"enabled":true,"password":"{{ _.password }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        authentication:
+          type: bearer
+          token: "{{ _.accessToken }}"
+          prefix: Bearer
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('setTwoFactor returns User', () => {
+              insomnia.expect(["User"]).to.include(body.data?.setTwoFactor?.__typename);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: logout
+        meta:
+          id: req_00270cf63f93c307e7e9d2cc7e639fa5
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # logout
+            Signs out the **current** device: revokes this session and its tokens. The script clears the saved tokens.
+
+            **Auth:** Bearer access token
+          sortKey: -98100
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation Logout {\n  logout { revokedSessionIds }\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        authentication:
+          type: bearer
+          token: "{{ _.accessToken }}"
+          prefix: Bearer
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+
+            insomnia.environment.set('accessToken', '');
+            insomnia.environment.set('refreshToken', '');
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: Federation
+    meta:
+      id: fld_f8c6e8016cfb9bead843882a23372b1a
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -97700
+      description: 'What Apollo Router sends to this subgraph. Use these to debug entity resolution. The auth subgraph owns `User @key(fields: "id")`.'
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: _service (subgraph SDL)
+        meta:
+          id: req_3d8a7250f5d98508b23302eee4377124
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # _service
+            Returns this subgraph's SDL with federation directives. This is what `rover` uses to compose the supergraph.
+          sortKey: -97900
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query SubgraphSdl {\n  _service { sdl }\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: _entities (User by id)
+        meta:
+          id: req_c2906c9405fdf44d31fec4025e799047
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # _entities
+            How other subgraphs (orders and others) get user fields: the router sends `{ __typename: "User", id }` and auth resolves the rest through `__resolveReference`, batched with a DataLoader.
+
+            Set `userId` in the environment (e.g. from **me**). Unknown ids resolve to `null`.
+          sortKey: -97800
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query Entities($representations: [_Any!]!) {\n  _entities(representations: $representations) {\n    ... on User { id email name role emailVerified twoFactorEnabled createdAt }\n  }\n}\n","variables":{"representations":[{"__typename":"User","id":"{{ _.userId }}"}]}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('no top-level GraphQL errors', () => {
+              insomnia.expect(body.errors).to.equal(undefined);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: REST
+    meta:
+      id: fld_fecd5681dc5dc6e2f413b28ce95e50f6
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -97300
+      description: Plain HTTP endpoints next to `/graphql`.
+    children:
+      - url: "{{ _.baseUrl }}/health"
+        name: GET /health
+        meta:
+          id: req_74fac65f350e55c6eab7fce463c1dac2
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # GET /health
+            Liveness: the process is up. Always `{ "status": "ok" }`. Used by load balancers and Kubernetes liveness probes.
+          sortKey: -97600
+        method: GET
+        headers:
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: insomnia.test('status 200', () => insomnia.expect(insomnia.response.code).to.equal(200));
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}/ready"
+        name: GET /ready
+        meta:
+          id: req_2147b9363d00e4979638b0f2bec6c634
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # GET /ready
+            Readiness: Postgres and Redis are reachable. `200 { "status": "ready" }` or `503 { "status": "not_ready" }`. Used by readiness probes to stop routing traffic to an instance that can't serve it.
+          sortKey: -97500
+        method: GET
+        headers:
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: insomnia.test('status 200', () => insomnia.expect(insomnia.response.code).to.equal(200));
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}/.well-known/jwks.json"
+        name: GET /.well-known/jwks.json
+        meta:
+          id: req_83432a91297a8db15a51bb35b8511567
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            # GET /.well-known/jwks.json
+            The public key (JWK, `EdDSA`/`Ed25519`, with `kid`) that verifies access tokens. Other subgraphs and the router use it to trust tokens without calling auth. Cached for 5 minutes.
+          sortKey: -97400
+        method: GET
+        headers:
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            insomnia.test('has an Ed25519 key', () => {
+              const keys = insomnia.response.json().keys;
+              insomnia.expect(keys[0].crv).to.equal('Ed25519');
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: Error cases
+    meta:
+      id: fld_5cd003bda85a37e1974a609aad9d1575
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -96600
+      description: Requests that are **meant to fail**, to see each error shape. Their scripts assert the failure.
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: "login: wrong password → InvalidCredentials"
+        meta:
+          id: req_98aa19f45be6fa18c1f8e3badea247a8
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: Wrong password. Counts toward the 10-in-a-row lockout for this email.
+          sortKey: -97200
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation Login($input: LoginInput!) {\n  login(input: $input) { __typename ... on UserError { __typename message } }\n}\n","variables":{"input":{"email":"{{ _.email }}","password":"Wrong!Passw0rd"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('login returns InvalidCredentials or RateLimited', () => {
+              insomnia.expect(["InvalidCredentials","RateLimited"]).to.include(body.data?.login?.__typename);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: "login: invalid email → ValidationError"
+        meta:
+          id: req_5d57158a4b9cf34f14786bd7b6ba83b8
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: zod validation failures come back as `ValidationError { field message }`, not as top-level errors.
+          sortKey: -97100
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation Login($input: LoginInput!) {\n  login(input: $input) { __typename ... on UserError { __typename message } ... on ValidationError { field } }\n}\n","variables":{"input":{"email":"not-an-email","password":"x"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('login returns ValidationError', () => {
+              insomnia.expect(["ValidationError"]).to.include(body.data?.login?.__typename);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: "verifyLoginOtp: wrong code → InvalidOtp"
+        meta:
+          id: req_185f238051a43a4dc2d70b8acc34347a
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: Uses up one of the challenge's 5 attempts. Run **login** first so `challengeId` is a login challenge.
+          sortKey: -97000
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation VerifyLoginOtp($input: VerifyLoginOtpInput!) {\n  verifyLoginOtp(input: $input) { __typename ... on UserError { __typename message } ... on InvalidOtp { attemptsRemaining } }\n}\n","variables":{"input":{"challengeId":"{{ _.challengeId }}","code":"000000"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('verifyLoginOtp returns InvalidOtp or OtpExpired', () => {
+              insomnia.expect(["InvalidOtp","OtpExpired"]).to.include(body.data?.verifyLoginOtp?.__typename);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: "me: no token → UNAUTHENTICATED"
+        meta:
+          id: req_67b3d2cf42828a0d1e23f3587b65b338
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: "No `Authorization` header: a top-level `UNAUTHENTICATED` error."
+          sortKey: -96900
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query Me {\n  me { id }\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('UNAUTHENTICATED', () => {
+              insomnia.expect(body.errors?.[0]?.extensions?.code).to.equal('UNAUTHENTICATED');
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: "me: bad token → UNAUTHENTICATED (INVALID)"
+        meta:
+          id: req_5b31c7871f160d50b5dbcd28cdaac19b
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: 'A malformed or wrongly signed token gives `extensions.reason: "INVALID"`. An expired one gives `"EXPIRED"` (refresh and retry), and a revoked session gives `"REVOKED"` (sign in again).'
+          sortKey: -96800
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query Me {\n  me { id }\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+          - name: Authorization
+            value: Bearer not.a.real.token
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('UNAUTHENTICATED / INVALID', () => {
+              insomnia.expect(body.errors?.[0]?.extensions?.code).to.equal('UNAUTHENTICATED');
+              insomnia.expect(body.errors?.[0]?.extensions?.reason).to.equal('INVALID');
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: Refresh token reuse → session revoked
+        meta:
+          id: req_633a5c8fb5e4243cb3375a45d5cf88a7
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          description: |-
+            Demonstrates **reuse detection**. The pre-request script uses the saved refresh token once (which rotates it), then this request replays the **old** token. Result: `InvalidRefreshToken`, and the whole session is revoked, so the access token from that session stops working too.
+
+            ⚠️ Ends the current session. Sign in again afterwards.
+          sortKey: -96700
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"mutation RefreshTokens($input: RefreshTokensInput!) {\n  refreshTokens(input: $input) { __typename ... on UserError { __typename message } }\n}\n","variables":{"input":{"refreshToken":"{{ _.refreshToken }}"}}}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          preRequest: |-
+            // Uses the current refresh token once (rotating it), then this request replays the OLD one.
+            const old = insomnia.environment.get('refreshToken');
+            const resp = await new Promise((resolve, reject) => {
+              insomnia.sendRequest({
+                url: insomnia.environment.get('baseUrl') + insomnia.environment.get('graphqlPath'),
+                method: 'POST',
+                header: [{ key: 'Content-Type', value: 'application/json' }],
+                body: {
+                  mode: 'raw',
+                  raw: JSON.stringify({
+                    query: 'mutation($t: String!) { refreshTokens(input: { refreshToken: $t }) { __typename } }',
+                    variables: { t: old },
+                  }),
+                },
+              }, (err, res) => (err ? reject(err) : resolve(res)));
+            });
+            console.log('First use:', typeof resp.json === 'function' ? JSON.stringify(resp.json()) : resp.body);
+            insomnia.environment.set('refreshToken', old);
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('refreshTokens returns InvalidRefreshToken', () => {
+              insomnia.expect(["InvalidRefreshToken"]).to.include(body.data?.refreshTokens?.__typename);
+            });
+
+            insomnia.environment.set('accessToken', '');
+            insomnia.environment.set('refreshToken', '');
+            console.log('Session revoked by reuse detection. Sign in again.');
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: Dev helpers
+    meta:
+      id: fld_1db6e29500d7597cfd25caaf09b4eb9c
+      created: 1791460800000
+      modified: 1791460800000
+      sortKey: -96400
+      description: Local-only helpers.
+    children:
+      - url: "{{ _.mailpitUrl }}/api/v1/search?limit=1&query=to%3A{{ _.email }}"
+        name: Get latest OTP (Mailpit)
+        meta:
+          id: req_002249957a4fe3df9d988e7b9c1822ae
+          created: 1791460800000
+          modified: 1791460800000
+          isPrivate: false
+          sortKey: -96500
+          description: "Reads the newest email to `email` from Mailpit and saves the 6-digit code from its subject into `otpCode`. The verify requests already do this automatically when `autoFetchOtp` is true. Mailpit UI: {{ mailpitUrl }}"
+        method: GET
+        headers: []
+        scripts:
+          afterResponse: |-
+            const msg = insomnia.response.json().messages?.[0];
+            const code = msg?.Subject?.match(/(\d{6})$/)?.[1];
+            insomnia.test('found a code', () => insomnia.expect(code).to.be.a('string'));
+            if (code) insomnia.environment.set('otpCode', code);
+            console.log(msg?.Subject);
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+cookieJar:
+  name: Default Jar
+  meta:
+    id: jar_f360a42d687718e2d958ab6ecb13ddfb
+    created: 1791460800000
+    modified: 1791460800000
+environments:
+  name: Base Environment
+  meta:
+    id: env_671e2f1f59052490998cc874ed74e34e
+    created: 1791460800000
+    modified: 1791460800000
+    isPrivate: false
+  data:
+    baseUrl: http://localhost:4001
+    graphqlPath: /graphql
+    mailpitUrl: http://localhost:8025
+    autoFetchOtp: true
+    userAgent: Insomnia (auth collection)
+    email: test.user@example.com
+    name: Test User
+    password: Str0ng!Passw0rd
+    newPassword: N3w!Passw0rd
+    devicePlatform: web
+    deviceName: Insomnia
+    appVersion: 1.0.0
+    deviceId: insomnia-dev
+    accessToken: ""
+    refreshToken: ""
+    challengeId: ""
+    otpCode: ""
+    sessionId: ""
+    revokeSessionId: ""
+    userId: ""
+  subEnvironments:
+    - name: local
+      meta:
+        id: env_277a64c48ffd05fe9d416e6d6f349273
+        created: 1791460800000
+        modified: 1791460800000
+        isPrivate: false
+        sortKey: 1
+      data:
+        baseUrl: http://localhost:4001
+        mailpitUrl: http://localhost:8025
+        autoFetchOtp: true
+      color: "#7d69cb"
+    - name: gateway
+      meta:
+        id: env_46fd326d5a4418b9f141be0cf750fad6
+        created: 1791460800000
+        modified: 1791460800000
+        isPrivate: false
+        sortKey: 2
+      data:
+        baseUrl: http://localhost:4000
+        mailpitUrl: http://localhost:8025
+        autoFetchOtp: true
+      color: "#59a210"
+    - name: staging
+      meta:
+        id: env_66452aefec6b681b13f16a8e31c6abff
+        created: 1791460800000
+        modified: 1791460800000
+        isPrivate: false
+        sortKey: 3
+      data:
+        baseUrl: https://api.staging.example.com
+        autoFetchOtp: false
+        email: ""
+        password: ""
+      color: "#d07502"

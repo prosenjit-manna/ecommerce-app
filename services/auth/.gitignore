@@ -1,0 +1,8 @@
+# Yarn 4 (no zero-installs: the cache isn't committed)
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*

@@ -1,9 +1,17 @@
 {
   "name": "@ecommerce/config-ts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "files": ["tsconfig.base.json"],
+  "description": "Shared strict TypeScript base config for the ecommerce-app services",
+  "license": "MIT",
+  "files": [
+    "tsconfig.base.json"
+  ],
   "exports": {
     "./base": "./tsconfig.base.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }

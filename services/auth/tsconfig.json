@@ -1,6 +1,22 @@
 {
-  "extends": "@ecommerce/config-ts/base",
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Self-contained for now. Once the shared config is published to npm, replace these
+  // compilerOptions with: "extends": "@<your-npm-scope>/config-ts/base"
   "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "sourceMap": true,
     "rootDir": ".",
     "outDir": "dist",
     "types": ["node"]
