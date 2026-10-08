@@ -2,7 +2,7 @@
 
 ## Context
 You're a full-stack JS developer who wants deeper skills in five areas: backend, AWS, microservices, React Native and DevOps/GitOps. The vehicle is one e-commerce app, built in  (currently empty) and grown phase by phase.
-Constraints: **10–15 hrs/week**, **Express/Fastify + TypeScript**, **AWS budget $50–100/mo** → about **32 weeks (~7–8 months)**.
+Constraints: **10–15 hrs/week**, **Express + TypeScript**, **AWS budget $50–100/mo** → about **32 weeks (~7–8 months)**.
 
 ## Why this order
 Each phase produces what the next one needs:
@@ -23,19 +23,19 @@ Rule: **finish each phase's "Done when" list before moving on.** Depth beats bre
 - `docker-compose.yml`: Postgres, Redis, Mailpit.
 - ADR folder (`docs/adr/`): write one short Architecture Decision Record per major choice. These notes are where much of the learning gets recorded.
 
-**Done when:** `pnpm dev` starts an empty Fastify app and Docker deps with one command.
+**Done when:** `pnpm dev` starts an empty Express app and Docker deps with one command.
 
 ## Phase 1 — Backend Deep Dive: Modular Monolith (Weeks 2–7) ★ highest priority
-Use **Fastify + TypeScript**. Every module (`auth`, `catalog`, `cart`, `orders`, `payments`, `inventory`) gets its own folder, its own routes, service and repository layers, and its own DB schema. Modules talk to each other only through an in-process interface, which prepares them to be split out in Phase 4.
+Use **Express 5 + TypeScript**. Every module (`auth`, `catalog`, `cart`, `orders`, `payments`, `inventory`) gets its own folder, its own routes, service and repository layers, and its own DB schema. Modules talk to each other only through an in-process interface, which prepares them to be split out in Phase 4.
 
 | Week | Build | Learn in depth |
 |---|---|---|
-| 2 | Project skeleton, config, logging | Fastify plugins/lifecycle, zod validation, pino structured logs, centralized error handling, env config |
+| 2 | Project skeleton, config, logging | Express middleware chain and routers, async error handling in Express 5, zod validation middleware, pino-http structured logs, a central error-handling middleware, env config |
 | 3 | Auth | argon2 hashing, JWT access + rotating refresh tokens, RBAC (customer/admin), rate limiting |
 | 4 | Catalog + Postgres | SQL first (Drizzle or Kysely, not a heavy ORM), migrations, indexes, `EXPLAIN ANALYZE`, cursor pagination, full-text search |
 | 5 | Cart + Redis | Caching strategies, TTLs, cache invalidation, guest→user cart merge |
 | 6 | Orders + Payments (Stripe test mode) | DB transactions, isolation levels, **idempotency keys**, webhooks with signature verification, **outbox pattern** |
-| 7 | Inventory + background jobs + tests | BullMQ queues/retries, optimistic locking for stock, Vitest unit tests + **Testcontainers** integration tests, OpenAPI docs via `@fastify/swagger` |
+| 7 | Inventory + background jobs + tests | BullMQ queues/retries, optimistic locking for stock, Vitest unit tests + **Testcontainers** integration tests, OpenAPI docs generated from zod schemas (`@asteasolutions/zod-to-openapi`) and served with `swagger-ui-express` |
 
 **Done when:** a user can register, browse, add to cart, check out with a Stripe test card, and see the order. You have at least 70% coverage on services, plus integration tests against real Postgres and Redis.
 
@@ -59,7 +59,7 @@ Before anything else, set up an **AWS Budgets alert at $60 and $90** and enable 
 ## Phase 4 — Microservices (Weeks 14–19)
 Extract services from the monolith one at a time, in this order: **Notifications → Catalog → Inventory → Payments → Orders**. Start with the easiest and least coupled, and finish with the core.
 - Each service owns its database (database-per-service), its own repo folder, its own Dockerfile and its own pipeline.
-- **Communication:** synchronous REST for queries, through an API gateway (your own Fastify gateway first, so you learn what a gateway does). Commands and events run asynchronously over **SNS → SQS fan-out** (or EventBridge).
+- **Communication:** synchronous REST for queries, through an API gateway (your own Express gateway with `http-proxy-middleware` first, so you learn what a gateway does). Commands and events run asynchronously over **SNS → SQS fan-out** (or EventBridge).
 - **Checkout saga** (orchestrated): reserve stock → charge payment → confirm order, with compensating actions on failure.
 - Reliability patterns: outbox and idempotent consumers, dead-letter queues, retries with backoff, timeouts and circuit breakers.
 - **Observability:** OpenTelemetry tracing across services → AWS X-Ray or Grafana Tempo; correlation IDs in logs.
