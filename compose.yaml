@@ -62,7 +62,8 @@ services:
 
   localstack:
     # AWS emulator for SNS, SQS and S3 (Phase 1 service events, catalog image uploads).
-    # Recent LocalStack images may require a (free) auth token: set LOCALSTACK_AUTH_TOKEN in .env.
+    # Requires an auth token (free Hobby plan at app.localstack.cloud). Without it the container
+    # exits with code 55 and keeps restarting. Set LOCALSTACK_AUTH_TOKEN in the root .env (see .env.example).
     image: docker.io/localstack/localstack:latest
     restart: unless-stopped
     environment:
