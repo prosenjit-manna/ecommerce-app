@@ -1,0 +1,346 @@
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.9", import: ["@key", "@shareable"])
+
+scalar DateTime
+
+# ---------------------------------------------------------------------------
+# Entities
+# ---------------------------------------------------------------------------
+
+"""
+A registered account. Owned by the auth subgraph; other subgraphs reference it by id.
+"""
+type User @key(fields: "id") {
+  id: ID!
+  email: String!
+  name: String!
+  role: Role!
+  emailVerified: Boolean!
+  "Email OTP is required after the password on sign-in. On by default."
+  twoFactorEnabled: Boolean!
+  createdAt: DateTime!
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+"""
+One signed-in device. Lists where and on what the user is signed in.
+"""
+type Session {
+  id: ID!
+  "True for the session making this request."
+  isCurrent: Boolean!
+  loginMethod: LoginMethod!
+  device: Device!
+  "IP address the session was created from."
+  ipAddress: String
+  "IP address of the most recent token refresh."
+  lastIpAddress: String
+  "Approximate location of the sign-in, from the IP address."
+  location: Location
+  createdAt: DateTime!
+  lastSeenAt: DateTime!
+  expiresAt: DateTime!
+}
+
+enum LoginMethod {
+  PASSWORD_OTP
+  PASSWORD
+  EMAIL_VERIFY
+}
+
+type Device {
+  "mobile, tablet, desktop, ..."
+  type: String
+  name: String
+  os: String
+  browser: String
+  "ios, android or web"
+  platform: String
+  appVersion: String
+}
+
+type Location {
+  city: String
+  region: String
+  country: String
+  countryCode: String
+  latitude: Float
+  longitude: Float
+}
+
+"""
+Security history entry: sign-ins, failed attempts, password resets, revoked sessions.
+"""
+type AuthEvent {
+  id: ID!
+  type: AuthEventType!
+  ipAddress: String
+  userAgent: String
+  location: Location
+  createdAt: DateTime!
+}
+
+enum AuthEventType {
+  SIGNUP
+  EMAIL_VERIFIED
+  LOGIN_PASSWORD_OK
+  LOGIN_FAILED
+  OTP_SENT
+  OTP_FAILED
+  LOGIN_SUCCESS
+  REFRESH
+  REFRESH_REUSE_DETECTED
+  LOGOUT
+  SESSION_REVOKED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET
+  RATE_LIMITED
+}
+
+type AuthEventEdge {
+  cursor: String!
+  node: AuthEvent!
+}
+
+type PageInfo @shareable {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+type AuthEventConnection {
+  edges: [AuthEventEdge!]!
+  pageInfo: PageInfo!
+}
+
+# ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
+
+type AuthTokens {
+  "Short-lived JWT (15 min). Send as `Authorization: Bearer <token>`."
+  accessToken: String!
+  accessTokenExpiresAt: DateTime!
+  "Single-use: every refresh returns a new one. Store it securely on the device."
+  refreshToken: String!
+  refreshTokenExpiresAt: DateTime!
+}
+
+type AuthSuccess {
+  user: User!
+  session: Session!
+  tokens: AuthTokens!
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFY
+  LOGIN
+  PASSWORD_RESET
+}
+
+"A code was emailed. Submit it with `challengeId`."
+type OtpChallenge {
+  challengeId: ID!
+  purpose: OtpPurpose!
+  "e.g. j******e@example.com"
+  maskedEmail: String!
+  expiresAt: DateTime!
+  "When `resendOtp` can be called again."
+  resendAvailableAt: DateTime!
+}
+
+type PasswordResetSuccess {
+  message: String!
+}
+
+type RevokeSessionsPayload {
+  revokedSessionIds: [ID!]!
+}
+
+# Expected failures (union members, not top-level errors).
+# Every one implements UserError, so a client can always select `... on UserError { message }`.
+
+interface UserError {
+  "Human-readable; safe to show to the user."
+  message: String!
+}
+
+type InvalidCredentials implements UserError {
+  message: String!
+}
+
+type InvalidOtp implements UserError {
+  message: String!
+  attemptsRemaining: Int!
+}
+
+type OtpExpired implements UserError {
+  message: String!
+}
+
+type EmailAlreadyRegistered implements UserError {
+  message: String!
+}
+
+type EmailNotVerified implements UserError {
+  message: String!
+  "A fresh verification code was sent; complete it with `verifyEmail`."
+  challenge: OtpChallenge!
+}
+
+type AccountDisabled implements UserError {
+  message: String!
+}
+
+type InvalidRefreshToken implements UserError {
+  message: String!
+}
+
+type WeakPassword implements UserError {
+  message: String!
+  reasons: [String!]!
+}
+
+type ValidationError implements UserError {
+  message: String!
+  field: String!
+}
+
+type RateLimited implements UserError {
+  message: String!
+  retryAfterSeconds: Int!
+}
+
+union SignUpResult = OtpChallenge | EmailAlreadyRegistered | WeakPassword | ValidationError | RateLimited
+union VerifyEmailResult = AuthSuccess | InvalidOtp | OtpExpired | AccountDisabled | ValidationError | RateLimited
+union LoginResult =
+    OtpChallenge
+  | AuthSuccess
+  | InvalidCredentials
+  | EmailNotVerified
+  | AccountDisabled
+  | ValidationError
+  | RateLimited
+union VerifyLoginOtpResult = AuthSuccess | InvalidOtp | OtpExpired | AccountDisabled | ValidationError | RateLimited
+union ResendOtpResult = OtpChallenge | OtpExpired | ValidationError | RateLimited
+union RefreshTokensResult = AuthTokens | InvalidRefreshToken | ValidationError | RateLimited
+union ForgotPasswordResult = OtpChallenge | ValidationError | RateLimited
+union ResetPasswordResult =
+    PasswordResetSuccess
+  | InvalidOtp
+  | OtpExpired
+  | WeakPassword
+  | ValidationError
+  | RateLimited
+union SetTwoFactorResult = User | InvalidCredentials
+
+# ---------------------------------------------------------------------------
+# Inputs
+# ---------------------------------------------------------------------------
+
+"What the app knows about the device. Recommended for native apps, whose User-Agent says little."
+input DeviceInfoInput {
+  "ios, android or web"
+  platform: String
+  "e.g. \"Prosenjit's iPhone\""
+  deviceName: String
+  appVersion: String
+  "Stable per-install id; used to recognise returning devices."
+  deviceId: String
+}
+
+input SignUpInput {
+  email: String!
+  name: String!
+  password: String!
+  device: DeviceInfoInput
+}
+
+input VerifyEmailInput {
+  challengeId: ID!
+  code: String!
+  device: DeviceInfoInput
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+  device: DeviceInfoInput
+}
+
+input VerifyLoginOtpInput {
+  challengeId: ID!
+  code: String!
+}
+
+input ResendOtpInput {
+  challengeId: ID!
+}
+
+input RefreshTokensInput {
+  refreshToken: String!
+}
+
+input ForgotPasswordInput {
+  email: String!
+}
+
+input ResetPasswordInput {
+  challengeId: ID!
+  code: String!
+  newPassword: String!
+}
+
+input RevokeSessionInput {
+  sessionId: ID!
+}
+
+input SetTwoFactorInput {
+  enabled: Boolean!
+  "Current password, to confirm it's really you."
+  password: String!
+}
+
+# ---------------------------------------------------------------------------
+# Operations
+# ---------------------------------------------------------------------------
+
+type Query {
+  "The signed-in user."
+  me: User!
+  "Devices the user is currently signed in on, most recently used first."
+  mySessions: [Session!]!
+  "Security history, newest first."
+  myAuthEvents(first: Int = 20, after: String): AuthEventConnection!
+}
+
+type Mutation {
+  "Creates an account and emails a verification code."
+  signUp(input: SignUpInput!): SignUpResult!
+  "Confirms the email with the code from `signUp` and signs the user in."
+  verifyEmail(input: VerifyEmailInput!): VerifyEmailResult!
+  "Step 1 of sign-in. Returns an OtpChallenge when two-factor is on (the default)."
+  login(input: LoginInput!): LoginResult!
+  "Step 2 of sign-in: the emailed code."
+  verifyLoginOtp(input: VerifyLoginOtpInput!): VerifyLoginOtpResult!
+  "Emails a new code for an open challenge."
+  resendOtp(input: ResendOtpInput!): ResendOtpResult!
+  "Exchanges a refresh token for a new access + refresh token pair."
+  refreshTokens(input: RefreshTokensInput!): RefreshTokensResult!
+  "Emails a reset code. Always succeeds, so it can't reveal which emails are registered."
+  forgotPassword(input: ForgotPasswordInput!): ForgotPasswordResult!
+  "Sets a new password with the code from `forgotPassword` and signs out every device."
+  resetPassword(input: ResetPasswordInput!): ResetPasswordResult!
+
+  "Signs out the current device."
+  logout: RevokeSessionsPayload!
+  "Signs out one of the user's devices."
+  revokeSession(input: RevokeSessionInput!): RevokeSessionsPayload!
+  "Signs out every device except this one."
+  revokeOtherSessions: RevokeSessionsPayload!
+  "Turns the email OTP step on or off."
+  setTwoFactor(input: SetTwoFactorInput!): SetTwoFactorResult!
+}

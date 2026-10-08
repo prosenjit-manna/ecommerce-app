@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "services/*"
+  - "packages/*"
+
+# Dependencies allowed to run install scripts (native builds).
+allowBuilds:
+  '@apollo/protobufjs': true
+  argon2: true
+  esbuild: true

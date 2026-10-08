@@ -1,0 +1,9 @@
+{
+  "extends": "@ecommerce/config-ts/base",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src", "scripts", "drizzle.config.ts", "codegen.ts"]
+}

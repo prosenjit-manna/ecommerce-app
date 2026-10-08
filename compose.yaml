@@ -1,0 +1,86 @@
+# Local development dependencies (works with `podman compose` and `docker compose`).
+# Run from the repo root.
+#
+#   podman compose up -d        # start everything
+#   podman compose ps           # check health
+#   podman compose down         # stop (data is kept)
+#   podman compose down -v      # stop and wipe all data
+#
+# Images use fully-qualified names (docker.io/...) so Podman doesn't prompt for a registry.
+# Ports bind to 127.0.0.1 only, so nothing is exposed to the network.
+
+name: ecommerce
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ecommerce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ecommerce}
+      POSTGRES_DB: ${POSTGRES_DB:-ecommerce}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # Postgres 18+ images keep data under /var/lib/postgresql (not .../data)
+      - postgres-data:/var/lib/postgresql
+      # Creates one database per service on first start (empty volume only).
+      # Existing volume? Create a new service's DB once by hand:
+      #   podman compose exec postgres psql -U ecommerce -c 'CREATE DATABASE catalog;'
+      - ./infra/local/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: docker.io/library/redis:8-alpine
+    restart: unless-stopped
+    # AOF persistence so carts / BullMQ jobs survive restarts.
+    # BullMQ requires maxmemory-policy=noeviction.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: docker.io/axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025" # SMTP (point the app's mailer here)
+      - "127.0.0.1:8025:8025" # Web UI: http://localhost:8025
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+
+  localstack:
+    # AWS emulator for SNS, SQS and S3 (Phase 1 service events, catalog image uploads).
+    # Recent LocalStack images may require a (free) auth token: set LOCALSTACK_AUTH_TOKEN in .env.
+    image: docker.io/localstack/localstack:latest
+    restart: unless-stopped
+    environment:
+      SERVICES: sns,sqs,s3
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
+      PERSISTENCE: "1"
+    ports:
+      - "127.0.0.1:4566:4566" # All AWS APIs: http://localhost:4566
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:4566/_localstack/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
+  localstack-data:
