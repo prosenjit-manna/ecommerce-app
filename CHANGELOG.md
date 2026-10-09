@@ -45,6 +45,9 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 - `router.yaml`: propagates `authorization`, `user-agent` and `x-forwarded-for`, passes subgraph errors through, uses a 100 KB request limit and a 10s subgraph timeout, sets CORS for Expo web and Studio, and exposes health on `:8088/health` and Prometheus metrics on `:9080/metrics`.
 - `rhai/main.rhai`: one `x-request-id` per client request, sent to every subgraph and echoed back to the client, so subgraph logs share a correlation ID.
 
+**Changed**
+- Moved `apps/api-gateway` to `services/api-gateway`, so `apps/` holds only client apps. Updated the compose mounts, the schema path in `supergraph.yaml`, the rover watch script and the docs. The `supergraph` service now mounts only `./services`.
+
 **Learned**
 - The router **redacts subgraph errors by default**. Without `include_subgraph_errors`, clients lose auth's `UNAUTHENTICATED` / `reason`.
 - Router 2.18 changed the header rules to `headers.all.request.operations: [...]` and moved the request size limit to `limits.router.http_max_request_bytes`. `router config validate` inside the image catches this kind of drift.

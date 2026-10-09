@@ -29,7 +29,7 @@ Rule: **finish each phase's "Done when" list before moving on.** Depth beats bre
 
 | Service | Port | Owns (data / GraphQL) | Storage | Publishes | Consumes |
 |---|---|---|---|---|---|
-| **Router** (`apps/api-gateway`) | 4000 | Supergraph, auth header + IP propagation, query limits | — | — | — |
+| **Router** (`services/api-gateway`) | 4000 | Supergraph, auth header + IP propagation, query limits | — | — | — |
 | **auth** ✅ | 4001 | `User` entity, sessions, tokens, OTP | Postgres `auth` | `user.registered`, `user.password_changed` | — |
 | **catalog** | 4002 | `Product`, categories, search | Postgres `catalog` | `product.created`, `product.updated`, `product.price_changed` | — |
 | **inventory** | 4003 | `Product.stock` (extends `Product`), reservations | Postgres `inventory` | `stock.reserved`, `stock.reservation_failed`, `stock.released` | `order.placed`, `order.cancelled`, `product.created` |
@@ -79,7 +79,7 @@ Tracked from Phase 1 onwards, in the same Grafana dashboards locally, on AWS and
 
 ## Phase 0 — Foundations (Week 1)
 - **One git repo, no monorepo tooling:** every service, app and package is a **standalone Yarn 4 project** with its own `package.json`, `yarn.lock` and `.yarnrc.yml` (`nodeLinker: node-modules`). There's no root workspace and no Turborepo, so any folder can move to its own repo later without changes.
-- Folders: `apps/` (api-gateway, mobile), `services/` (one folder per service), `packages/` (config-ts, config-eslint, service-kit, contracts, shared-types).
+- Folders: `apps/` (mobile), `services/` (api-gateway + one folder per service), `packages/` (config-ts, config-eslint, service-kit, contracts, shared-types).
 - **Shared packages are published to public npm** under your own scope (e.g. `@<your-scope>/config-ts`), versioned with semver, and installed by version in each service. For local iteration on a package, use `yarn link` temporarily, but never commit a linked dependency.
 - TypeScript strict, ESLint + Prettier, Husky + commitlint (conventional commits).
 - Local dependencies in **one compose file at the repo root** (move it out of `apps/api/`, since there's no monolith any more): Postgres with **one database per service** created by an init script, Redis, Mailpit, LocalStack (SNS/SQS/S3), Jaeger for traces, and **Prometheus + Grafana** for metrics (Prometheus scrapes the router and every service's `/metrics`).
@@ -159,8 +159,8 @@ Stack: **Expo + Expo Router + TypeScript**, **Apollo Client** (normalized cache,
 ## Target repo layout
 ```
 ecommerce-app/
-  apps/        api-gateway (Apollo Router + supergraph config), mobile
-  services/    auth, catalog, inventory, cart, orders, payments, notifications
+  apps/        mobile
+  services/    api-gateway (Apollo Router + supergraph config), auth, catalog, inventory, cart, orders, payments, notifications
   packages/    service-kit, contracts, shared-types, config-eslint, config-ts
   infra/       terraform/, helm/, k8s/, observability/ (Prometheus config, Grafana dashboards + alert rules as code)
   gitops/      argocd apps + env overlays (or separate repo)

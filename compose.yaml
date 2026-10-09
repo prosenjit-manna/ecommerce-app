@@ -92,14 +92,14 @@ services:
   # --- API gateway (profile: apps) -----------------------------------------------------------------
 
   supergraph:
-    # Composes apps/api-gateway/supergraph.yaml into the supergraph-data volume, then polls every 2s
+    # Composes services/api-gateway/supergraph.yaml into the supergraph-data volume, then polls every 2s
     # and recomposes on change. A failed composition keeps the last good supergraph.
-    build: ./apps/api-gateway/rover
+    build: ./services/api-gateway/rover
     profiles: [apps]
     restart: unless-stopped
     volumes:
-      # Same relative layout as the repo, so the schema paths in supergraph.yaml resolve.
-      - ./apps/api-gateway:/workspace/apps/api-gateway:ro
+      # Same relative layout as the repo (the gateway sits next to the subgraphs), so the schema
+      # paths in supergraph.yaml resolve.
       - ./services:/workspace/services:ro
       - supergraph-data:/supergraph
     healthcheck:
@@ -128,8 +128,8 @@ services:
       - "127.0.0.1:8088:8088" # Health: http://localhost:8088/health
       - "127.0.0.1:9080:9080" # Prometheus metrics: http://localhost:9080/metrics
     volumes:
-      - ./apps/api-gateway/router.yaml:/config/router.yaml:ro
-      - ./apps/api-gateway/rhai:/config/rhai:ro
+      - ./services/api-gateway/router.yaml:/config/router.yaml:ro
+      - ./services/api-gateway/rhai:/config/rhai:ro
       - supergraph-data:/supergraph:ro
 
 volumes:

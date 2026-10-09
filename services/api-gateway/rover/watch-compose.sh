@@ -3,7 +3,7 @@
 # Polls instead of using inotify: file events from a macOS host don't reliably reach the Podman VM.
 set -u
 
-CONFIG=/workspace/apps/api-gateway/supergraph.yaml
+CONFIG=/workspace/services/api-gateway/supergraph.yaml
 SCHEMAS='/workspace/services/*/src/graphql/schema.graphql'
 OUT=/supergraph/supergraph.graphql
 TMP=/tmp/supergraph.graphql

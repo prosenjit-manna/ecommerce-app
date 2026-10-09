@@ -13,4 +13,4 @@ subgraphs:
     routing_url: http://host.containers.internal:4001/graphql
     schema:
       # A file (not introspection), so composing works even when auth is down.
-      file: ../../services/auth/src/graphql/schema.graphql
+      file: ../auth/src/graphql/schema.graphql
