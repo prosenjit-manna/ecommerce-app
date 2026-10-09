@@ -28,6 +28,7 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 - [ ] ESLint + Prettier (shared `packages/config-eslint`)
 - [ ] Husky + commitlint (conventional commits)
 - [x] `compose.yaml`: Postgres, Redis, Mailpit (+ LocalStack)
+- [x] Prometheus + Grafana in compose (`apps` profile)
 - [ ] `packages/service-kit` + Apollo Router with one "hello" subgraph (router ✅ in compose with the auth subgraph; `service-kit` still to do)
 - [ ] First ADR in `docs/adr/`
 - [x] Move the compose file from `apps/api/` to the repo root (`compose.yaml`)
@@ -37,6 +38,17 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 ---
 
 ## Log
+
+### 2026-10-09 · Prometheus + Grafana
+**Added**
+- `prometheus` (v3.15.0, `:9090`) and `grafana` (13.2.3, `:3000`) in `compose.yaml` under the `apps` profile, so `podman compose --profile apps up -d` starts them with the router.
+- `infra/observability/prometheus/prometheus.yml`: scrapes the router (`router:9080`) and Prometheus itself every 15s. It also has an `auth` target on the host (`host.containers.internal:4001`), which stays down until auth exposes `/metrics` (week 2). The config reloads with `POST /-/reload`.
+- Grafana provisioning: a Prometheus data source (`uid: prometheus`) and a file provider for `infra/observability/grafana/dashboards/`. Local access is anonymous Admin with no login form.
+- **Router overview** dashboard: requests/s, router p50/p95/p99, GraphQL errors by code, operations by HTTP status, p95 and request rate per subgraph, query-planning p95, and scrape-target health.
+
+**Learned**
+- Prometheus **pulls**: the router only keeps counters in memory and serves them as text. Nothing is stored until a server scrapes them, and they reset when the router restarts.
+- `rate()` needs at least two scrapes inside its window, so traffic sent before the first scrape shows 0. Dashboards use `$__rate_interval`, which Grafana sizes to the scrape interval.
 
 ### 2026-10-09 · Root Insomnia collection
 **Added**

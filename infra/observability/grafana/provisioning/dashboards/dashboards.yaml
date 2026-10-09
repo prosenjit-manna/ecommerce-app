@@ -1,0 +1,14 @@
+# Loads every dashboard JSON under infra/observability/grafana/dashboards/ (mounted at
+# /var/lib/grafana/dashboards); subfolders become Grafana folders.
+# UI edits are allowed for experimenting, but the JSON file is the source of truth:
+# export a changed dashboard (Share → Export → JSON) back into that folder.
+apiVersion: 1
+
+providers:
+  - name: ecommerce
+    type: file
+    allowUiUpdates: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true
