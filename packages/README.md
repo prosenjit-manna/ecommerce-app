@@ -6,7 +6,7 @@ Shared libraries. Each folder is a **standalone Yarn project published to public
 |---|---|---|
 | `config-ts/` | Shared `tsconfig` base (strict) | 0 |
 | `config-eslint/` | Shared ESLint config | 0 |
-| `service-kit/` | Server boilerplate: env, logging, Express + Apollo subgraph setup, JWT/JWKS verification, rate limiting, errors, metrics | 1 |
+| `service-kit/` | Server boilerplate: env, logging, Express + Apollo subgraph setup, JWT/JWKS verification, rate limiting, errors, metrics. **Built so far:** `@ecommerce/service-kit/metrics` (Prometheus: HTTP, GraphQL outcomes, Node.js runtime) | 1 |
 | `contracts/` | Event schemas (SNS/SQS) shared between services | 1 |
 | `shared-types/` | Shared zod schemas and TypeScript types (API + mobile) | 1 |
 

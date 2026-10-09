@@ -16,12 +16,11 @@ scrape_configs:
           service: api-gateway
 
   # Subgraphs run on the host with `yarn dev` until Phase 2, then this becomes `auth:4001`.
-  # auth shows DOWN (404) until it exposes /metrics (service-kit metrics plugin, roadmap week 2).
+  # Each service sets its own `service` label (@ecommerce/service-kit createMetrics), so none is
+  # added here: a second one would make Prometheus rename the app's label to `exported_service`.
   - job_name: services
     static_configs:
       - targets: ["host.containers.internal:4001"]
-        labels:
-          service: auth
 
   - job_name: prometheus
     static_configs:

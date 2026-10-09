@@ -39,6 +39,23 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 
 ## Log
 
+### 2026-10-09 · Service metrics (`@ecommerce/service-kit/metrics`)
+**Added**
+- `packages/service-kit`: a standalone Yarn package, `@ecommerce/service-kit` 0.1.0 (not published yet). Its `createMetrics({ service })` returns one Prometheus registry with:
+  - `http_requests_total{method, route, status}` and `http_request_duration_seconds`. These also cover what Apollo never sees: rate-limit 429s, body-parser 400s, REST routes and 404s. `route` is the route pattern, never the raw URL.
+  - `graphql_operations_total{operation, type, outcome, result}`, counted per root field, plus the `graphql_operation_duration_seconds` histogram. `outcome` follows the roadmap classification (`success` / `user_error` / `client_error` / `server_error`). `user_error` means the result implements `UserError`, read from the schema. `result` is the union typename, e.g. `InvalidCredentials`.
+  - Node.js runtime metrics (`nodejs_*`, `process_*`) and a `service` label on every series.
+- `services/auth`: serves `GET /metrics` and uses the GraphQL plugin. Prometheus's `services` job is now UP.
+
+**Changed**
+- `prometheus.yml`: the `services` job no longer adds a static `service` label. The app sets it, and a duplicate would be renamed to `exported_service`.
+
+**Learned**
+- The `operation` label is the **root field name**, not the client's operation name. Clients can send any name (unbounded series), and through the router it arrives rewritten (`Login__auth__0`).
+- A linked package can load a second copy of `graphql`, and graphql's `instanceof` helpers (`isObjectType`) break across copies. The plugin checks `Symbol.toStringTag` instead.
+
+**To do before committing auth:** `@ecommerce/service-kit` is consumed through `yarn link`, and auth's `package.json` holds a `resolutions` entry with an absolute `portal:` path. Publish 0.1.0 to npm, run `yarn unlink @ecommerce/service-kit` in auth, then `yarn install`.
+
 ### 2026-10-09 · Prometheus + Grafana
 **Added**
 - `prometheus` (v3.15.0, `:9090`) and `grafana` (13.2.3, `:3000`) in `compose.yaml` under the `apps` profile, so `podman compose --profile apps up -d` starts them with the router.
