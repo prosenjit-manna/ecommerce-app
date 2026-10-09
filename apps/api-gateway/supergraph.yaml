@@ -1,0 +1,16 @@
+# Composition input for `rover supergraph compose`: one entry per subgraph.
+# The `supergraph` compose service watches this file and every subgraph schema, and writes
+# supergraph.graphql into a volume that the router hot-reloads. Never edit the output by hand.
+#
+# federation_version must match the plugin baked into rover/Dockerfile (SUPERGRAPH_VERSION),
+# and be >= the highest federation @link version used by any subgraph (auth: v2.9).
+federation_version: =2.15.4
+
+subgraphs:
+  auth:
+    # The router runs in a container while auth runs on the host with `yarn dev`.
+    # Phase 2 (auth in compose) changes this to http://auth:4001/graphql.
+    routing_url: http://host.containers.internal:4001/graphql
+    schema:
+      # A file (not introspection), so composing works even when auth is down.
+      file: ../../services/auth/src/graphql/schema.graphql

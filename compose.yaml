@@ -6,6 +6,14 @@
 #   podman compose down         # stop (data is kept)
 #   podman compose down -v      # stop and wipe all data
 #
+# API gateway (profile `apps`): Apollo Router on http://localhost:4000/graphql, plus a rover
+# container that recomposes the supergraph whenever a subgraph schema changes.
+# Subgraphs still run on the host (`yarn dev` in services/<name>) until Phase 2.
+#   podman compose --profile apps up -d                     # deps + gateway
+#   podman compose --profile apps up -d --build supergraph  # after bumping rover / federation versions
+#   podman compose --profile apps logs -f supergraph router
+#   podman compose --profile apps exec supergraph cat /supergraph/supergraph.graphql
+#
 # Images use fully-qualified names (docker.io/...) so Podman doesn't prompt for a registry.
 # Ports bind to 127.0.0.1 only, so nothing is exposed to the network.
 
@@ -81,7 +89,51 @@ services:
       timeout: 5s
       retries: 10
 
+  # --- API gateway (profile: apps) -----------------------------------------------------------------
+
+  supergraph:
+    # Composes apps/api-gateway/supergraph.yaml into the supergraph-data volume, then polls every 2s
+    # and recomposes on change. A failed composition keeps the last good supergraph.
+    build: ./apps/api-gateway/rover
+    profiles: [apps]
+    restart: unless-stopped
+    volumes:
+      # Same relative layout as the repo, so the schema paths in supergraph.yaml resolve.
+      - ./apps/api-gateway:/workspace/apps/api-gateway:ro
+      - ./services:/workspace/services:ro
+      - supergraph-data:/supergraph
+    healthcheck:
+      test: ["CMD", "test", "-s", "/supergraph/supergraph.graphql"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  router:
+    image: ghcr.io/apollographql/router:v2.18.0
+    profiles: [apps]
+    restart: unless-stopped
+    depends_on:
+      supergraph:
+        condition: service_healthy
+    environment:
+      APOLLO_ROUTER_CONFIG_PATH: /config/router.yaml
+      APOLLO_ROUTER_SUPERGRAPH_PATH: /supergraph/supergraph.graphql
+      APOLLO_ROUTER_HOT_RELOAD: "true" # reload on supergraph or router.yaml changes
+      APOLLO_TELEMETRY_DISABLED: "true"
+    # Podman defines host.containers.internal itself; this makes Docker (Linux/Windows) match.
+    extra_hosts:
+      - "host.containers.internal:host-gateway"
+    ports:
+      - "127.0.0.1:4000:4000" # GraphQL + Sandbox: http://localhost:4000/graphql
+      - "127.0.0.1:8088:8088" # Health: http://localhost:8088/health
+      - "127.0.0.1:9080:9080" # Prometheus metrics: http://localhost:9080/metrics
+    volumes:
+      - ./apps/api-gateway/router.yaml:/config/router.yaml:ro
+      - ./apps/api-gateway/rhai:/config/rhai:ro
+      - supergraph-data:/supergraph:ro
+
 volumes:
   postgres-data:
   redis-data:
   localstack-data:
+  supergraph-data:

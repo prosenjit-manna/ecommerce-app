@@ -1,0 +1,72 @@
+# Apollo Router v2 runtime config. Runs only in the `router` compose service, so every
+# listener binds 0.0.0.0 (127.0.0.1 inside a container is unreachable from the host);
+# compose publishes the ports on 127.0.0.1 only.
+#
+# Not set here: operation limits (max_depth, max_aliases, ...) are a GraphOS Enterprise
+# feature; without a license the router refuses to start ("license violation").
+# Depth/complexity limits come in week 31 (subgraph side or persisted queries).
+
+supergraph:
+  listen: 0.0.0.0:4000
+  path: /graphql
+  # Dev only, like auth's `introspection: !isProd`.
+  introspection: true
+
+# Apollo Sandbox (explorer) at http://localhost:4000/graphql in the browser.
+sandbox:
+  enabled: true
+homepage:
+  enabled: false
+
+# GET http://localhost:8088/health for compose / ECS / Kubernetes probes.
+health_check:
+  enabled: true
+  listen: 0.0.0.0:8088
+
+cors:
+  policies:
+    - origins:
+        - http://localhost:8081 # Expo web (Phase 5)
+        - https://studio.apollographql.com
+
+headers:
+  all:
+    request:
+      # Router >= 2.18 nests the rules under `operations` (older versions took a plain list).
+      operations:
+        # Auth's buildContext reads the Bearer token; requestContext reads the UA and,
+        # with TRUST_PROXY=1, the client IP from X-Forwarded-For (ALB → router → subgraph).
+        - propagate:
+            named: authorization
+        - propagate:
+            named: user-agent
+        - propagate:
+            named: x-forwarded-for
+        # x-request-id is set per subgraph call by rhai/main.rhai.
+
+# The router redacts subgraph errors by default, which would hide auth's
+# UNAUTHENTICATED / reason: EXPIRED signal. Subgraphs mask internal errors themselves.
+include_subgraph_errors:
+  all: true
+
+limits:
+  router:
+    # Same as auth's express.json({ limit: '100kb' }).
+    http_max_request_bytes: 102400
+
+traffic_shaping:
+  all:
+    timeout: 10s
+
+rhai:
+  scripts: /config/rhai
+  main: main.rhai
+
+telemetry:
+  exporters:
+    metrics:
+      prometheus:
+        enabled: true
+        # 9080, not the default 9090: the Prometheus server in compose will use 9090.
+        listen: 0.0.0.0:9080
+        path: /metrics

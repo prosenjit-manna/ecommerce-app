@@ -28,7 +28,7 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 - [ ] ESLint + Prettier (shared `packages/config-eslint`)
 - [ ] Husky + commitlint (conventional commits)
 - [x] `compose.yaml`: Postgres, Redis, Mailpit (+ LocalStack)
-- [ ] `packages/service-kit` + Apollo Router with one "hello" subgraph
+- [ ] `packages/service-kit` + Apollo Router with one "hello" subgraph (router ✅ in compose with the auth subgraph; `service-kit` still to do)
 - [ ] First ADR in `docs/adr/`
 - [x] Move the compose file from `apps/api/` to the repo root (`compose.yaml`)
 - [ ] Publish `config-ts` to npm under your scope
@@ -37,6 +37,21 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 ---
 
 ## Log
+
+### 2026-10-09 · API gateway
+**Added**
+- `apps/api-gateway`: **Apollo Router v2.18** on `localhost:4000/graphql` (Sandbox in the browser), fully containerized under the compose `apps` profile, so nothing is installed on the host. `podman compose --profile apps up -d` starts it.
+- `supergraph` compose service: a small rover image (rover v0.41.0 + composition plugin v2.15.4, baked in at build time) that composes `supergraph.yaml` into a shared volume and recomposes within about 2s of any subgraph schema change. The router hot-reloads it, and a failed composition keeps the last good supergraph.
+- `router.yaml`: propagates `authorization`, `user-agent` and `x-forwarded-for`, passes subgraph errors through, uses a 100 KB request limit and a 10s subgraph timeout, sets CORS for Expo web and Studio, and exposes health on `:8088/health` and Prometheus metrics on `:9080/metrics`.
+- `rhai/main.rhai`: one `x-request-id` per client request, sent to every subgraph and echoed back to the client, so subgraph logs share a correlation ID.
+
+**Learned**
+- The router **redacts subgraph errors by default**. Without `include_subgraph_errors`, clients lose auth's `UNAUTHENTICATED` / `reason`.
+- Router 2.18 changed the header rules to `headers.all.request.operations: [...]` and moved the request size limit to `limits.router.http_max_request_bytes`. `router config validate` inside the image catches this kind of drift.
+- Inside a container, listen on `0.0.0.0`, not `127.0.0.1`. Host services are reachable at `host.containers.internal` (Podman; Docker needs `extra_hosts: host-gateway`).
+- File events from the macOS host don't reliably reach the Podman VM, so the schema watcher polls instead of using inotify.
+- The router's metrics port is moved to 9080 so it won't clash with the Prometheus server (9090) later.
+- Subgraphs behind a router shouldn't answer with HTTP 401/403: the router adds an extra `SUBREQUEST_HTTP_ERROR` next to the real `UNAUTHENTICATED` error.
 
 ### 2026-10-08 · Planning
 **Changed**
