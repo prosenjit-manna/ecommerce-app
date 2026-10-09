@@ -4,7 +4,16 @@ import { collectDefaultMetrics, Registry } from 'prom-client';
 import { createGraphqlMetricsPlugin } from './graphql.js';
 import { createHttpMetrics } from './http.js';
 
-export { classify, errorOutcome, userErrorTypeNames, type Outcome, type RootField, type RootFieldOutcome } from './graphql.js';
+export {
+  classify,
+  errorOutcome,
+  expectedSeries,
+  userErrorTypeNames,
+  type Outcome,
+  type RootField,
+  type RootFieldOutcome,
+  type SeriesLabels,
+} from './graphql.js';
 export { routeLabel } from './http.js';
 
 export interface MetricsOptions {

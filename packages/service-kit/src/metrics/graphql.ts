@@ -51,6 +51,52 @@ export function userErrorTypeNames(schema: GraphQLSchema): Set<string> {
   return names;
 }
 
+export interface SeriesLabels {
+  operation: string;
+  type: 'query' | 'mutation';
+  outcome: Outcome;
+  result: string;
+}
+
+/**
+ * Every label combination the schema allows: per Query/Mutation field, each member of its result
+ * union (user_error if it implements UserError, else success), or `success` with no result for
+ * non-union fields, plus client_error and server_error. The plugin creates these at 0 on startup:
+ * a counter series that first appears already at 1 has no earlier sample, so increase()/rate()
+ * miss its first event (e.g. the first InvalidOtp after a restart would never be counted).
+ */
+export function expectedSeries(schema: GraphQLSchema, userErrorTypes: ReadonlySet<string>): SeriesLabels[] {
+  const series: SeriesLabels[] = [];
+  const roots = [
+    ['query', schema.getQueryType()],
+    ['mutation', schema.getMutationType()],
+  ] as const;
+  for (const [type, root] of roots) {
+    for (const field of Object.values(root?.getFields() ?? {})) {
+      const results = resultTypeNames(field.type).map((result): SeriesLabels => ({
+        operation: field.name,
+        type,
+        outcome: userErrorTypes.has(result) ? 'user_error' : 'success',
+        result,
+      }));
+      series.push(
+        ...results,
+        { operation: field.name, type, outcome: 'client_error', result: '' },
+        { operation: field.name, type, outcome: 'server_error', result: '' },
+      );
+    }
+  }
+  return series;
+}
+
+/** Union members of a field's type (through NonNull/List wrappers), or `['']` for any other type. */
+function resultTypeNames(fieldType: unknown): string[] {
+  let named = fieldType;
+  while (named && typeof named === 'object' && 'ofType' in named) named = (named as { ofType: unknown }).ofType;
+  if ((named as { [Symbol.toStringTag]?: string })[Symbol.toStringTag] !== 'GraphQLUnionType') return [''];
+  return (named as { getTypes(): readonly { name: string }[] }).getTypes().map((t) => t.name);
+}
+
 export interface RootField {
   /** Schema field name, used as the `operation` label. Bounded by the schema. */
   name: string;
@@ -124,6 +170,7 @@ export function createGraphqlMetricsPlugin(registry: Registry): ApolloServerPlug
   return {
     async serverWillStart({ schema }) {
       userErrorTypes = userErrorTypeNames(schema);
+      for (const labels of expectedSeries(schema, userErrorTypes)) operations.inc(labels, 0);
     },
 
     async requestDidStart() {

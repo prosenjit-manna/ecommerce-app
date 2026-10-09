@@ -2,6 +2,10 @@
 # /var/lib/grafana/dashboards); subfolders become Grafana folders.
 # UI edits are allowed for experimenting, but the JSON file is the source of truth:
 # export a changed dashboard (Share → Export → JSON) back into that folder.
+#
+# Grafana only picks up new or changed files at startup here (file events from the macOS host
+# don't reach the Podman VM, and the reload API needs a server admin). After editing a dashboard:
+#   podman compose --profile apps restart grafana
 apiVersion: 1
 
 providers:

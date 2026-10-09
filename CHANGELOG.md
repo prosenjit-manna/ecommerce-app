@@ -39,6 +39,34 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 
 ## Log
 
+### 2026-10-09 · Services in compose (dev mode)
+**Added**
+- `compose.yaml`: an opt-in **`services` profile** that runs auth in a container with hot reload: `podman compose --profile apps --profile services up -d`. A shared `x-node-dev` block (image `node:24-slim`, Corepack/Yarn 4, migrations then `yarn dev`, `/ready` health check) means each later service only needs about 10 lines.
+- Inside the container: `node_modules` lives in its own volume (`auth-node_modules`), because argon2 built on macOS doesn't load on Linux. Yarn and Corepack caches go in `node-dev-cache`. Compose sets `postgres` / `redis` / `mailpit` hostnames and `TRUST_PROXY=1`, while the secrets still come from `services/auth/.env`.
+
+**Changed**
+- `services/auth/package.json`: the service-kit link is now relative (`portal:../../packages/service-kit`), so it resolves on the host and in the container.
+
+**Learned**
+- File events from macOS don't reach the Podman VM, so `tsx watch` uses polling (`CHOKIDAR_USEPOLLING=true`; tsx bundles chokidar).
+- Node's `--env-file` never overrides variables that are already set, so compose `environment:` takes precedence over `.env`.
+- A published container port is reachable from other containers at `host.containers.internal:<port>`, the same address as a service run with `yarn dev` on the host. The router and Prometheus therefore work in both modes without any switch.
+
+### 2026-10-09 · Auth sign-ins dashboard
+**Added**
+- `infra/observability/grafana/dashboards/auth.json`: the **Auth sign-ins** dashboard (http://localhost:3000/d/auth). It shows:
+  - Successful and failed logins, success rate and rate-limited attempts for the selected range.
+  - Logins per minute (success vs failed) and failed logins by reason.
+  - A sign-in funnel: attempts → password OK → signed in.
+  - A table of every result, `login`/`verifyLoginOtp` p95, and global 429s.
+- A successful login is `AuthSuccess` from `verifyLoginOtp`, or from `login` directly when two-factor is off. A failed login is any other outcome of either step.
+
+**Fixed**
+- `@ecommerce/service-kit` now creates every `graphql_operations_total` series the schema allows, at 0, when the server starts. Before, a series first appeared already at 1, so `increase()` never counted the first event: after each restart, the first wrong code or lockout was invisible.
+
+**Learned**
+- In this Podman-on-macOS setup, Grafana only reads dashboard files at startup, and the reload API needs a server admin. After adding or editing a dashboard JSON, run `podman compose --profile apps restart grafana`.
+
 ### 2026-10-09 · Service metrics (`@ecommerce/service-kit/metrics`)
 **Added**
 - `packages/service-kit`: a standalone Yarn package, `@ecommerce/service-kit` 0.1.0 (not published yet). Its `createMetrics({ service })` returns one Prometheus registry with:

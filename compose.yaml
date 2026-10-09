@@ -18,11 +18,56 @@
 # Grafana shows the dashboards in infra/observability/grafana/dashboards/.
 #   Prometheus: http://localhost:9090/targets     Grafana: http://localhost:3000 (no login locally)
 #   curl -X POST http://localhost:9090/-/reload   # after editing prometheus.yml
+#   podman compose --profile apps restart grafana # after adding or editing a dashboard JSON
+#
+# Services in dev mode (profile `services`, opt-in): each subgraph runs in a container with
+# hot reload, instead of `yarn dev` on the host. Use one or the other: both bind the same port.
+#   podman compose --profile apps --profile services up -d
+#   podman compose --profile services logs -f auth
+#   podman compose --profile services restart auth   # after `yarn build` in packages/service-kit
+# The router and Prometheus reach a subgraph at host.containers.internal:<port> in both modes:
+# the container publishes that port on the host, so nothing has to be switched.
 #
 # Images use fully-qualified names (docker.io/...) so Podman doesn't prompt for a registry.
 # Ports bind to 127.0.0.1 only, so nothing is exposed to the network.
 
 name: ecommerce
+
+# Shared by every Node.js service in dev mode. Source is bind-mounted and `tsx watch` reloads on
+# change; node_modules lives in a per-service volume because native modules (argon2) built on
+# macOS don't load on Linux.
+x-node-dev: &node-dev
+  image: docker.io/library/node:24-slim
+  profiles: [services]
+  restart: unless-stopped
+  init: true
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://localhost:' + process.env.PORT + '/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+    interval: 10s
+    timeout: 5s
+    retries: 6
+    start_period: 180s # first start runs a full `yarn install`
+
+x-node-dev-env: &node-dev-env
+  NODE_ENV: development
+  # File events from the macOS host don't reach the Podman VM, so tsx watch (chokidar) polls.
+  CHOKIDAR_USEPOLLING: "true"
+  CHOKIDAR_INTERVAL: "300"
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+  COREPACK_HOME: /cache/corepack
+  YARN_GLOBAL_FOLDER: /cache/yarn
+  # Container hostnames instead of the .env's localhost. Node's --env-file never overrides
+  # variables that are already set, so .env still provides the secrets (JWT keys, OTP pepper).
+  REDIS_URL: redis://redis:6379
+  SMTP_HOST: mailpit
+  SMTP_PORT: "1025"
+  # Requests arrive through Apollo Router: take the client IP from X-Forwarded-For.
+  TRUST_PROXY: "1"
 
 services:
   postgres:
@@ -137,6 +182,30 @@ services:
       - ./services/api-gateway/rhai:/config/rhai:ro
       - supergraph-data:/supergraph:ro
 
+  # --- Services in dev mode (profile: services) ---------------------------------------------------
+
+  auth:
+    <<: *node-dev
+    working_dir: /workspace/services/auth
+    # Install (fast after the first run thanks to the cache volume), migrate, then watch.
+    command: ["sh", "-c", "corepack yarn install --immutable && corepack yarn db:migrate && exec corepack yarn dev"]
+    environment:
+      <<: *node-dev-env
+      PORT: "4001"
+      DATABASE_URL: postgres://${POSTGRES_USER:-ecommerce}:${POSTGRES_PASSWORD:-ecommerce}@postgres:5432/auth
+      # Keep Yarn's install state with the container's node_modules, not in the host's .yarn/.
+      YARN_INSTALL_STATE_PATH: /workspace/services/auth/node_modules/.yarn-install-state.gz
+    ports:
+      - "127.0.0.1:4001:4001" # Subgraph: http://localhost:4001/graphql
+    volumes:
+      # Same layout as the repo, so the relative `portal:../../packages/service-kit` link resolves.
+      # Uses the host's packages/service-kit/dist and node_modules: run `yarn install && yarn build`
+      # there first (pure JS, so the macOS install works on Linux).
+      - ./services/auth:/workspace/services/auth
+      - ./packages/service-kit:/workspace/packages/service-kit:ro
+      - auth-node_modules:/workspace/services/auth/node_modules
+      - node-dev-cache:/cache
+
   # --- Observability (profile: apps) ---------------------------------------------------------------
 
   prometheus:
@@ -192,3 +261,5 @@ volumes:
   supergraph-data:
   prometheus-data:
   grafana-data:
+  node-dev-cache:
+  auth-node_modules:
