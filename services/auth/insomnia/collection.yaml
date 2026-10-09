@@ -1,7 +1,8 @@
+type: collection.insomnia.rest/5.0
 # Insomnia collection for the auth subgraph (Insomnia v5 format).
 # Import: Insomnia → Create → Import → this file (or use Git Sync on this repo).
 # Edit in Insomnia and re-export as YAML (Export → Insomnia v5) to keep this file in sync.
-type: collection.insomnia.rest/5.0
+# `type:` must stay on the first line: Insomnia only tries its v5 importer when the file starts with `type: `.
 name: Auth service
 meta:
   id: wrk_f360a42d687718e2d958ab6ecb13ddfb

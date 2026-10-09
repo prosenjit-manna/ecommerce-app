@@ -38,6 +38,11 @@ Legend: ⚪ Not started · 🟡 In progress · ✅ Done (the "Done when" checkli
 
 ## Log
 
+### 2026-10-09 · Root Insomnia collection
+**Added**
+- `insomnia/collection.yaml`: every API in one collection, **generated** by `insomnia/build.mjs` (`yarn build`) from `services/*/insomnia/collection.yaml`. GraphQL goes through the router; Federation and REST requests go straight to each service (`authUrl`, ...).
+- `services/api-gateway/insomnia/collection.yaml`: a router smoke query (which also checks the `x-request-id` echo), `GET /health` (:8088) and `GET /metrics` (:9080).
+
 ### 2026-10-09 · API gateway
 **Added**
 - `apps/api-gateway`: **Apollo Router v2.18** on `localhost:4000/graphql` (Sandbox in the browser), fully containerized under the compose `apps` profile, so nothing is installed on the host. `podman compose --profile apps up -d` starts it.

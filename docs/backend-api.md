@@ -204,6 +204,15 @@ services/notifications/insomnia/collection.yaml
 - **Service collections** call the subgraph directly (for example `localhost:4001/graphql`) to test one service on its own.
 - **The gateway collection** calls the router and holds the cross-service flows: register → login → browse → add to cart → checkout → get the order.
 
+### Root collection: every API in one place
+`insomnia/collection.yaml` holds every API in one collection. **It's generated, so don't edit it:** edit a service collection, then run `yarn build` in `insomnia/` (`build.mjs`).
+
+- One top folder per service, with the gateway first.
+- GraphQL operations go through the router (`apiGatewayUrl`), like the mobile app. Federation queries (`_service`, `_entities`) and plain HTTP endpoints go straight to the service, because the router doesn't expose them.
+- Each service's `baseUrl` becomes `<service>Url` (`authUrl`, `catalogUrl`, ...). Shared variables like `email` and `accessToken` are merged, and the build warns when two services disagree on a value.
+- Sub-environments with the same name (`local`, `staging`) are merged. Each service's `gateway` sub-environment is dropped, because the root collection always uses the router.
+- Ids are derived from the source ids, so you can import the root collection next to the service collections without the two overwriting each other.
+
 ### Folders inside each service collection
 | Folder | Contents |
 |---|---|

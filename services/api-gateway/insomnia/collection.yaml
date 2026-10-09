@@ -1,0 +1,161 @@
+type: collection.insomnia.rest/5.0
+# Insomnia collection for Apollo Router (Insomnia v5 format).
+# Import: Insomnia → Create → Import → this file (or use Git Sync on this repo).
+# Edit in Insomnia and re-export as YAML (Export → Insomnia v5) to keep this file in sync,
+# then run `yarn build` in insomnia/ to regenerate the root collection.
+# `type:` must stay on the first line: Insomnia only tries its v5 importer when the file starts with `type: `.
+name: API gateway
+meta:
+  id: wrk_9db555a90089fca4bd4b8562391fb7fb
+  created: 1791547200000
+  modified: 1791547200000
+  description: |-
+    # API gateway (Apollo Router)
+
+    The single client endpoint: `http://localhost:4000/graphql`. Start it with `podman compose --profile apps up -d`; subgraphs still run on the host with `yarn dev`.
+
+    The router's own endpoints live on separate ports: health on `:8088`, Prometheus metrics on `:9080`. Cross-service flows (register → login → browse → cart → checkout) go here as the services get built.
+collection:
+  - name: Router
+    meta:
+      id: fld_8af44e4e39cc71e9ad435194560d32df
+      created: 1791547200000
+      modified: 1791547200000
+      sortKey: -99900
+      description: Is the router up, and is it serving a composed supergraph?
+    children:
+      - url: "{{ _.baseUrl }}{{ _.graphqlPath }}"
+        name: Smoke query (__typename)
+        meta:
+          id: req_6e07944b9f0ef04265ff612baa9292a2
+          created: 1791547200000
+          modified: 1791547200000
+          isPrivate: false
+          description: |-
+            # Smoke query
+            The smallest query the router can plan. A `Query` answer means the supergraph composed and loaded.
+
+            The router echoes `x-request-id` (set by `rhai/main.rhai`) on every response. Send your own `x-request-id` header to trace one request through every subgraph's logs.
+          sortKey: -99900
+        method: POST
+        body:
+          mimeType: application/graphql
+          text: '{"query":"query Smoke {\n  __typename\n}\n"}'
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: |-
+            const body = insomnia.response.json();
+
+            insomnia.test('supergraph answers', () => {
+              insomnia.expect(body.data?.__typename).to.equal('Query');
+            });
+
+            insomnia.test('router echoes x-request-id', () => {
+              const id = insomnia.response.headers.find((h) => h.key.toLowerCase() === 'x-request-id')?.value;
+              insomnia.expect(id).to.be.a('string');
+              console.log('x-request-id', id);
+            });
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.routerHealthUrl }}/health"
+        name: GET /health
+        meta:
+          id: req_bdb4aa8794efe5a9d37f831cd9133efe
+          created: 1791547200000
+          modified: 1791547200000
+          isPrivate: false
+          description: |-
+            # GET /health
+            Router liveness on its own port (`health_check` in `router.yaml`): `{ "status": "UP" }`. Used by compose, ECS and Kubernetes probes.
+          sortKey: -99800
+        method: GET
+        headers:
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: insomnia.test('status 200', () => insomnia.expect(insomnia.response.code).to.equal(200));
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ _.routerMetricsUrl }}/metrics"
+        name: GET /metrics
+        meta:
+          id: req_6a19aee7954021bb73d4458c5f495762
+          created: 1791547200000
+          modified: 1791547200000
+          isPrivate: false
+          description: |-
+            # GET /metrics
+            Prometheus metrics in text format: request counts, latency histograms and per-subgraph timings. Prometheus will scrape this later; it's on 9080 so it won't clash with Prometheus itself on 9090.
+          sortKey: -99700
+        method: GET
+        headers:
+          - name: User-Agent
+            value: "{{ _.userAgent }}"
+        scripts:
+          afterResponse: insomnia.test('status 200', () => insomnia.expect(insomnia.response.code).to.equal(200));
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+cookieJar:
+  name: Default Jar
+  meta:
+    id: jar_16a2f014977eeea93cdf3a8e199b3935
+    created: 1791547200000
+    modified: 1791547200000
+environments:
+  name: Base Environment
+  meta:
+    id: env_2b8a9767eaa6e82c494f2627d22976cd
+    created: 1791547200000
+    modified: 1791547200000
+    isPrivate: false
+  data:
+    baseUrl: http://localhost:4000
+    graphqlPath: /graphql
+    routerHealthUrl: http://localhost:8088
+    routerMetricsUrl: http://localhost:9080
+    userAgent: Insomnia (gateway collection)
+  subEnvironments:
+    - name: local
+      meta:
+        id: env_4ee4b32c70367bc56e6bdbc63812291f
+        created: 1791547200000
+        modified: 1791547200000
+        isPrivate: false
+        sortKey: 1
+      data:
+        baseUrl: http://localhost:4000
+        routerHealthUrl: http://localhost:8088
+        routerMetricsUrl: http://localhost:9080
+      color: "#7d69cb"
+    - name: staging
+      meta:
+        id: env_203af6cf2081495459b7d62786b67a86
+        created: 1791547200000
+        modified: 1791547200000
+        isPrivate: false
+        sortKey: 3
+      data:
+        baseUrl: https://api.staging.example.com
+      color: "#d07502"
