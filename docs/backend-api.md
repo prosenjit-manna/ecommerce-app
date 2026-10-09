@@ -205,7 +205,7 @@ services/notifications/insomnia/collection.yaml
 - **The gateway collection** calls the router and holds the cross-service flows: register → login → browse → add to cart → checkout → get the order.
 
 ### Root collection: every API in one place
-`insomnia/collection.yaml` holds every API in one collection. **It's generated, so don't edit it:** edit a service collection, then run `yarn build` in `insomnia/` (`build.mjs`).
+`insomnia/collection.yaml` holds every API in one collection. **It's generated, so don't edit it:** edit a service collection, then run `yarn build` in `insomnia/` (`build.mjs`). Full guide: [prosenjit-insomnia-collection.md](insomnia-collection.md).
 
 - One top folder per service, with the gateway first.
 - GraphQL operations go through the router (`apiGatewayUrl`), like the mobile app. Federation queries (`_service`, `_entities`) and plain HTTP endpoints go straight to the service, because the router doesn't expose them.
